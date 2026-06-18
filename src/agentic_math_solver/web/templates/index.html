@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agentic Math Solver</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">AMS</div>
+          <div>
+            <div class="brand-title">Agentic Math Solver</div>
+            <div class="brand-subtitle">Chat local com agentes, juiz e backend Flask</div>
+          </div>
+        </div>
+
+        <section class="panel">
+          <h2>Backend</h2>
+          <div class="kv"><span>Endpoint</span><strong id="backend-endpoint">{{ backend.endpoint }}</strong></div>
+          <div class="kv"><span>Modelo</span><strong id="backend-model">{{ backend.model_name }}</strong></div>
+          <div class="kv"><span>Pesos</span><strong id="backend-weights-source">{{ backend.weights_source }}</strong></div>
+          <div class="kv"><span>Caminho</span><strong id="backend-weights-path">{{ backend.weights_path }}</strong></div>
+        </section>
+
+        <section class="panel">
+          <h2>Status</h2>
+          <div id="health-pill" class="pill pill-warn">verificando...</div>
+          <p class="muted">A interface abre mesmo sem os pesos. O envio de mensagens depende do backend local do modelo.</p>
+        </section>
+
+        <section class="panel">
+          <h2>Pasta</h2>
+          <div class="kv"><span>Prompts</span><strong>{{ backend.prompt_dir }}</strong></div>
+          <div class="kv"><span>Saída</span><strong>{{ backend.output_dir }}</strong></div>
+        </section>
+      </aside>
+
+      <main class="chat-pane">
+        <header class="hero">
+          <div>
+            <p class="eyebrow">Local-first</p>
+            <h1>ChatGPT-style interface</h1>
+            <p class="hero-copy">Uma interface web simples, responsiva e modular para conversar com o seu solver local.</p>
+          </div>
+          <button id="clear-btn" class="ghost-btn" type="button">Limpar</button>
+        </header>
+
+        <section id="chat-window" class="chat-window" aria-live="polite"></section>
+
+        <footer class="composer-wrap">
+          <div class="composer">
+            <textarea id="message-input" rows="3" placeholder="Digite seu problema aqui..."></textarea>
+            <div class="composer-actions">
+              <div class="hint">Enter envia, Shift+Enter quebra linha</div>
+              <button id="send-btn" class="send-btn" type="button">Enviar</button>
+            </div>
+          </div>
+        </footer>
+      </main>
+    </div>
+
+    <script>
+      window.AMS_BACKEND = {{ backend | tojson }};
+    </script>
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+  </body>
+</html>

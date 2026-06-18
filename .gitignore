@@ -1,0 +1,59 @@
+# Arquivos compilados do Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribuição e pacotes
+bin/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Ambientes virtuais
+.venv/
+venv/
+ENV/
+env/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Arquivos de configuração e variáveis de ambiente (Segurança)
+.env
+.env.secret
+.env.*
+instance/
+.pytest_cache/
+.htmlcov/
+htmlcov/
+.coverage
+.coverage.*
+
+# Ferramentas de Linting, Formatação e Tipagem
+.mypy_cache/
+.ruff_cache/
+.black
+.pyre/
+
+# Configurações de IDEs (VS Code, PyCharm, etc.)
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
