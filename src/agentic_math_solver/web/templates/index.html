@@ -1,62 +1,86 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Agentic Math Solver</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+    <script>
+      window.MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']],
+          displayMath: [['$$', '$$'], ['\\[', '\\]']]
+        },
+        svg: { fontCache: 'global' }
+      };
+    </script>
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    
+    <!-- SOTA Rendering Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    
+    <!-- Mermaid for Diagrams -->
+    <script type="module">
+      import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+      mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+      window.mermaid = mermaid;
+    </script>
   </head>
   <body>
     <div class="app-shell">
       <aside class="sidebar">
-        <div class="brand">
-          <div class="brand-mark">AMS</div>
-          <div>
-            <div class="brand-title">Agentic Math Solver</div>
-            <div class="brand-subtitle">Chat local com agentes, juiz e backend Flask</div>
-          </div>
+        <button id="new-chat-btn" class="new-chat-btn">
+          + New Chat
+        </button>
+        
+        <ul id="history-list" class="history-list">
+          <!-- History items injected via JS -->
+        </ul>
+
+        <div class="sidebar-footer">
+          <div id="health-pill" class="pill pill-warn">Connecting...</div>
         </div>
-
-        <section class="panel">
-          <h2>Backend</h2>
-          <div class="kv"><span>Endpoint</span><strong id="backend-endpoint">{{ backend.endpoint }}</strong></div>
-          <div class="kv"><span>Modelo</span><strong id="backend-model">{{ backend.model_name }}</strong></div>
-          <div class="kv"><span>Pesos</span><strong id="backend-weights-source">{{ backend.weights_source }}</strong></div>
-          <div class="kv"><span>Caminho</span><strong id="backend-weights-path">{{ backend.weights_path }}</strong></div>
-        </section>
-
-        <section class="panel">
-          <h2>Status</h2>
-          <div id="health-pill" class="pill pill-warn">verificando...</div>
-          <p class="muted">A interface abre mesmo sem os pesos. O envio de mensagens depende do backend local do modelo.</p>
-        </section>
-
-        <section class="panel">
-          <h2>Pasta</h2>
-          <div class="kv"><span>Prompts</span><strong>{{ backend.prompt_dir }}</strong></div>
-          <div class="kv"><span>Saída</span><strong>{{ backend.output_dir }}</strong></div>
-        </section>
       </aside>
 
       <main class="chat-pane">
-        <header class="hero">
-          <div>
-            <p class="eyebrow">Local-first</p>
-            <h1>ChatGPT-style interface</h1>
-            <p class="hero-copy">Uma interface web simples, responsiva e modular para conversar com o seu solver local.</p>
-          </div>
-          <button id="clear-btn" class="ghost-btn" type="button">Limpar</button>
-        </header>
-
-        <section id="chat-window" class="chat-window" aria-live="polite"></section>
+        <section id="chat-window" class="chat-window" aria-live="polite">
+            <!-- Messages go here -->
+        </section>
 
         <footer class="composer-wrap">
-          <div class="composer">
-            <textarea id="message-input" rows="3" placeholder="Digite seu problema aqui..."></textarea>
-            <div class="composer-actions">
-              <div class="hint">Enter envia, Shift+Enter quebra linha</div>
-              <button id="send-btn" class="send-btn" type="button">Enviar</button>
+          <div id="attachments-preview" class="attachments-preview"></div>
+          
+          <div id="options-menu" class="options-menu hidden">
+            <button id="menu-attach-btn" class="menu-item-btn">
+              <svg viewBox="0 0 24 24"><path d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5a2.5 2.5 0 0 1 5 0v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5a2.5 2.5 0 0 0 5 0V5c0-3.04-2.46-5.5-5.5-5.5S4 1.96 4 5v11.5c0 3.87 3.13 7 7 7s7-3.13 7-7V6h-1.5z"/></svg>
+              Attach File
+            </button>
+            <div class="menu-divider"></div>
+            <div class="menu-setting">
+              <label>Model ID:</label>
+              <input type="text" id="model-input" value="{{ backend.model_id }}" />
             </div>
+            <div class="menu-setting">
+              <label>Thinking:</label>
+              <select id="thinking-select">
+                <option value="deep">Deep Swarm</option>
+                <option value="fast">Fast (1 Agent)</option>
+              </select>
+            </div>
+          </div>
+          
+          <div class="composer">
+            <button id="plus-btn" class="plus-btn" type="button" title="More Options">
+              <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+            </button>
+            <input type="file" id="file-input" multiple style="display:none;" />
+            <textarea id="message-input" rows="1" placeholder="Send a message..."></textarea>
+            <button id="send-btn" class="send-btn" type="button" aria-label="Send">
+              <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+            </button>
           </div>
         </footer>
       </main>

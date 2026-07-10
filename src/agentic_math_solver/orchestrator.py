@@ -59,11 +59,13 @@ class SwarmOrchestrator:
         vote_counts = Counter(answers)
 
         if not vote_counts:
-            return SolveResult(final_answer=0, used_judge=False, vote_counts={}, agent_results=results, judge_notes="No agent produced a parseable answer.")
+            return SolveResult(final_answer="Não foi possível chegar a uma resposta final.", used_judge=False, vote_counts={}, agent_results=results, judge_notes="No agent produced a parseable answer.", educational_summary="O sistema falhou em extrair uma solução válida do modelo.")
 
         top_answer, top_votes = vote_counts.most_common(1)[0]
         if len(vote_counts) == 1 or top_votes >= 3 or not self.config.use_judge:
-            return SolveResult(final_answer=normalize_answer(top_answer), used_judge=False, vote_counts=dict(vote_counts), agent_results=results)
+            final_ans = normalize_answer(top_answer)
+            summary = self._generate_educational_summary(problem, final_ans)
+            return SolveResult(final_answer=final_ans, used_judge=False, vote_counts=dict(vote_counts), agent_results=results, educational_summary=summary)
 
         judge_answer, judge_notes = self.judge.decide(
             problem,
@@ -74,6 +76,20 @@ class SwarmOrchestrator:
             temperature=max(0.0, min(0.4, self.config.model.temperature)),
         )
         if judge_answer is None:
-            return SolveResult(final_answer=normalize_answer(top_answer), used_judge=True, vote_counts=dict(vote_counts), agent_results=results, judge_notes=judge_notes)
+            final_ans = normalize_answer(top_answer)
+            summary = self._generate_educational_summary(problem, final_ans)
+            return SolveResult(final_answer=final_ans, used_judge=True, vote_counts=dict(vote_counts), agent_results=results, judge_notes=judge_notes, educational_summary=summary)
 
-        return SolveResult(final_answer=normalize_answer(judge_answer), used_judge=True, vote_counts=dict(vote_counts), agent_results=results, judge_notes=judge_notes)
+        final_ans = normalize_answer(judge_answer)
+        summary = self._generate_educational_summary(problem, final_ans)
+        return SolveResult(final_answer=final_ans, used_judge=True, vote_counts=dict(vote_counts), agent_results=results, judge_notes=judge_notes, educational_summary=summary)
+
+    def _generate_educational_summary(self, problem: str, final_answer: str) -> str:
+        messages = [
+            {"role": "system", "content": "Você é um professor de matemática experiente e didático. Sua tarefa é pegar um problema e sua resposta final, e produzir uma explicação passo a passo excelente. Use Markdown, caixas de código e equações matemáticas (no formato LaTeX com $$ ou $). Resuma a lógica de forma clara e educativa."},
+            {"role": "user", "content": f"Problema: {problem}\nResposta Final Verificada: {final_answer}\n\nPor favor, explique passo a passo como chegar a essa resposta."}
+        ]
+        try:
+            return self.client.chat(messages, temperature=0.3, max_tokens=self.config.model.max_tokens)
+        except Exception as e:
+            return f"Erro ao gerar resumo educacional: {str(e)}"

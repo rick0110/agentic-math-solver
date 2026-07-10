@@ -1,24 +1,31 @@
-[build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "agentic-math-solver"
 version = "0.1.0"
 description = "A modular local-first multi-agent math solver with judge-based arbitration."
 readme = "README.md"
-requires-python = ">=3.11"
-dependencies = ["Flask>=3.0"]
+# Core dependencies remain light and engine-agnostic
+dependencies = [
+    "Flask", 
+    "duckduckgo-search", 
+    "mcp"
+]
 
 [project.optional-dependencies]
-cpu = ["transformers>=4.41", "torch>=2.2"]
-dev = ["pytest>=8.0"]
-
-[project.scripts]
-agentic-math-solver = "agentic_math_solver.cli:main"
-
-[tool.setuptools]
-package-dir = {"" = "src"}
-
-[tool.setuptools.packages.find]
-where = ["src"]
+# Group vLLM and its required torch runtime together
+vllm = [
+    "vllm>=0.6.0",
+    "torch"
+]
+# Group SGLang and its required torch runtime together
+sglang = [
+    "sglang",
+    "torch"
+]
+# Keep your existing environments
+cpu = [
+    "transformers", 
+    "torch"
+]
+dev = [
+    "pytest"
+]

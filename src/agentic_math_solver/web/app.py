@@ -63,8 +63,35 @@ def create_app(config: AppConfig) -> Flask:
         if not message:
             return jsonify({"ok": False, "error": "Mensagem vazia."}), 400
 
+        files = payload.get("files", [])
+        options = payload.get("options", {})
+        
+        if options:
+            model_val = options.get("model")
+            if model_val:
+                solver.config.model.model_id = model_val
+                solver.config.model.model_name = model_val
+            thinking_val = options.get("thinking")
+            if thinking_val == "fast":
+                solver.config.agent_count = 1
+                solver.config.use_judge = False
+            elif thinking_val == "deep":
+                solver.config.agent_count = 4
+                solver.config.use_judge = True
+                
+        from ..file_processor import process_uploaded_files
+        file_context = process_uploaded_files(files, config.resolved_output_dir())
+        
+        full_message = message
+        if file_context:
+            full_message = file_context + full_message
+
         try:
-            result = solver.solve(message)
+            result = solver.solve(full_message)
+            
+            # Extract step-by-step from the educational summary
+            step_by_step = getattr(result, "educational_summary", "")
+
             return jsonify(
                 {
                     "ok": True,
@@ -72,6 +99,7 @@ def create_app(config: AppConfig) -> Flask:
                     "used_judge": result.used_judge,
                     "vote_counts": result.vote_counts,
                     "judge_notes": result.judge_notes,
+                    "step_by_step": step_by_step,
                     "backend": backend_snapshot(),
                 }
             )
