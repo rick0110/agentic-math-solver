@@ -4,6 +4,7 @@ const sendBtn = document.getElementById("send-btn");
 const healthPill = document.getElementById("health-pill");
 const historyList = document.getElementById("history-list");
 const newChatBtn = document.getElementById("new-chat-btn");
+const sidebarSearch = document.getElementById("sidebar-search");
 const fileInput = document.getElementById("file-input");
 const listFileInput = document.getElementById("list-file-input");
 const plusBtn = document.getElementById("plus-btn");
@@ -12,9 +13,14 @@ const menuAttachBtn = document.getElementById("menu-attach-btn");
 const menuListBtn = document.getElementById("menu-list-btn");
 const attachmentsPreview = document.getElementById("attachments-preview");
 
-const CONVERSATIONS_KEY = "ams_conversations";
-let conversations = JSON.parse(localStorage.getItem(CONVERSATIONS_KEY) || "[]");
+// Conversations are persisted server-side (one JSON file per conversation
+// under outputs/conversations/), so history survives clearing the browser.
+// `conversations` only holds lightweight metadata for the sidebar list;
+// full message bodies are fetched on demand via loadConversation().
+let conversations = [];
 let currentConversationId = null;
+let currentMessages = [];
+let sidebarFilter = "";
 let busy = false;
 let pendingFiles = [];
 
@@ -93,36 +99,140 @@ messageInput.addEventListener('input', function() {
     }
 });
 
-function saveConversations() {
-    localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify(conversations));
+async function fetchConversations() {
+    try {
+        const res = await fetch("/api/conversations");
+        const data = await res.json();
+        conversations = data.conversations || [];
+    } catch (error) {
+        conversations = [];
+    }
     renderSidebar();
 }
 
-function createNewChat() {
-    const id = Date.now().toString();
-    const newConv = { id, title: "New Conversation", messages: [] };
-    conversations.unshift(newConv);
-    currentConversationId = id;
-    saveConversations();
-    loadConversation(id);
+function upsertConversationMeta(meta) {
+    const idx = conversations.findIndex(c => c.id === meta.id);
+    if (idx >= 0) {
+        conversations[idx] = { ...conversations[idx], ...meta };
+    } else {
+        conversations.unshift(meta);
+    }
+    conversations.sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
 }
 
-function loadConversation(id) {
+async function persistConversation() {
+    if (!currentConversationId) {
+        currentConversationId = Date.now().toString();
+    }
+    const firstUserMsg = currentMessages.find(m => m.role === "user");
+    const title = firstUserMsg
+        ? firstUserMsg.content.substring(0, 40) + (firstUserMsg.content.length > 40 ? "..." : "")
+        : "Nova Conversa";
+
+    try {
+        const res = await fetch(`/api/conversations/${currentConversationId}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ title, messages: currentMessages }),
+        });
+        const data = await res.json();
+        if (data.ok) {
+            upsertConversationMeta({
+                id: currentConversationId,
+                title: data.conversation.title,
+                updated_at: data.conversation.updated_at,
+                created_at: data.conversation.created_at,
+                message_count: currentMessages.length,
+            });
+            renderSidebar();
+        }
+    } catch (error) {
+        // Local session state still holds the messages; a retry on the next
+        // turn will attempt to persist again.
+    }
+}
+
+function createNewChat() {
+    currentConversationId = null;
+    currentMessages = [];
+    chatWindow.innerHTML = "";
+    renderWelcomeScreen();
+    renderSidebar();
+}
+
+async function loadConversation(id) {
     currentConversationId = id;
     renderSidebar();
     chatWindow.innerHTML = "";
 
-    const conv = conversations.find(c => c.id === id);
-    if (!conv) return;
+    try {
+        const res = await fetch(`/api/conversations/${id}`);
+        if (!res.ok) {
+            renderWelcomeScreen();
+            return;
+        }
+        const data = await res.json();
+        currentMessages = (data.conversation && data.conversation.messages) || [];
+    } catch (error) {
+        currentMessages = [];
+    }
 
-    if (conv.messages.length === 0) {
+    if (currentMessages.length === 0) {
         renderWelcomeScreen();
     } else {
-        conv.messages.forEach(msg => {
+        currentMessages.forEach(msg => {
             renderBubble(msg.role, msg.content, msg.extraClass);
         });
         chatWindow.scrollTop = chatWindow.scrollHeight;
     }
+}
+
+async function renameConversation(id, newTitle) {
+    const title = newTitle.trim();
+    if (!title) return;
+    try {
+        const res = await fetch(`/api/conversations/${id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ title }),
+        });
+        const data = await res.json();
+        if (data.ok) {
+            upsertConversationMeta({ id, title: data.conversation.title, updated_at: data.conversation.updated_at });
+            renderSidebar();
+        }
+    } catch (error) {
+        // Ignore; sidebar keeps the previous title.
+    }
+}
+
+async function deleteConversation(id) {
+    try {
+        await fetch(`/api/conversations/${id}`, { method: "DELETE" });
+    } catch (error) {
+        // Ignore network errors; still remove locally so the UI stays responsive.
+    }
+    conversations = conversations.filter(c => c.id !== id);
+    if (currentConversationId === id) {
+        createNewChat();
+    } else {
+        renderSidebar();
+    }
+}
+
+function timeAgo(isoString) {
+    if (!isoString) return "";
+    const then = new Date(isoString).getTime();
+    if (Number.isNaN(then)) return "";
+    const diffSeconds = Math.max(0, (Date.now() - then) / 1000);
+    if (diffSeconds < 60) return "agora";
+    const diffMinutes = Math.floor(diffSeconds / 60);
+    if (diffMinutes < 60) return `${diffMinutes}min`;
+    const diffHours = Math.floor(diffMinutes / 60);
+    if (diffHours < 24) return `${diffHours}h`;
+    const diffDays = Math.floor(diffHours / 24);
+    if (diffDays < 30) return `${diffDays}d`;
+    return new Date(isoString).toLocaleDateString();
 }
 
 function renderWelcomeScreen() {
@@ -162,21 +272,150 @@ window.setAndSend = function(text) {
 
 function renderSidebar() {
     historyList.innerHTML = "";
-    conversations.forEach(conv => {
+
+    const filter = sidebarFilter.trim().toLowerCase();
+    const visible = filter
+        ? conversations.filter(c => (c.title || "").toLowerCase().includes(filter))
+        : conversations;
+
+    if (conversations.length === 0) {
+        const empty = document.createElement("li");
+        empty.className = "history-empty";
+        empty.textContent = "Nenhuma conversa ainda";
+        historyList.appendChild(empty);
+        return;
+    }
+
+    if (visible.length === 0) {
+        const empty = document.createElement("li");
+        empty.className = "history-empty";
+        empty.textContent = "Nenhuma conversa encontrada";
+        historyList.appendChild(empty);
+        return;
+    }
+
+    visible.forEach(conv => {
         const li = document.createElement("li");
         li.className = "history-item";
         if (conv.id === currentConversationId) li.classList.add("active");
-        li.textContent = conv.title || "New Conversation";
+
+        const titleEl = document.createElement("span");
+        titleEl.className = "history-item-title";
+        titleEl.textContent = conv.title || "Nova Conversa";
+        titleEl.title = "Duplo clique para renomear";
+        titleEl.ondblclick = (e) => {
+            e.stopPropagation();
+            startRenaming(li, titleEl, conv);
+        };
+
+        const timeEl = document.createElement("span");
+        timeEl.className = "history-item-time";
+        timeEl.textContent = timeAgo(conv.updated_at);
+
+        const actions = document.createElement("span");
+        actions.className = "history-item-actions";
+
+        const renameBtn = document.createElement("button");
+        renameBtn.className = "history-action-btn";
+        renameBtn.title = "Renomear";
+        renameBtn.innerHTML = "✏️";
+        renameBtn.onclick = (e) => {
+            e.stopPropagation();
+            startRenaming(li, titleEl, conv);
+        };
+
+        const deleteBtn = document.createElement("button");
+        deleteBtn.className = "history-action-btn history-action-danger";
+        deleteBtn.title = "Excluir";
+        deleteBtn.innerHTML = "\u{1F5D1}️";
+        deleteBtn.onclick = (e) => {
+            e.stopPropagation();
+            if (confirm(`Excluir a conversa "${conv.title}"? Esta ação não pode ser desfeita.`)) {
+                deleteConversation(conv.id);
+            }
+        };
+
+        actions.appendChild(renameBtn);
+        actions.appendChild(deleteBtn);
+
+        li.appendChild(titleEl);
+        li.appendChild(timeEl);
+        li.appendChild(actions);
         li.onclick = () => loadConversation(conv.id);
         historyList.appendChild(li);
     });
 }
 
+function startRenaming(li, titleEl, conv) {
+    const input = document.createElement("input");
+    input.className = "history-item-rename-input";
+    input.type = "text";
+    input.value = conv.title || "";
+    titleEl.replaceWith(input);
+    input.focus();
+    input.select();
+
+    let settled = false;
+    const commit = () => {
+        if (settled) return;
+        settled = true;
+        const newTitle = input.value.trim();
+        if (newTitle && newTitle !== conv.title) {
+            conv.title = newTitle;
+            renameConversation(conv.id, newTitle);
+        } else {
+            renderSidebar();
+        }
+    };
+
+    input.addEventListener("blur", commit);
+    input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); input.blur(); }
+        if (e.key === "Escape") { settled = true; renderSidebar(); }
+    });
+}
+
+sidebarSearch.addEventListener("input", (e) => {
+    sidebarFilter = e.target.value;
+    renderSidebar();
+});
+
+// Markdown parsers (marked.js) mangle raw LaTeX: underscores become <em>,
+// backslashes get treated as escapes, etc. To render math correctly we pull
+// out every $...$/$$...$$/\(...\)/\[...\] segment before handing the text to
+// marked, then splice the original TeX source back into the resulting HTML
+// so MathJax sees it untouched.
+const MATH_PATTERNS = [
+    /\$\$[\s\S]+?\$\$/g,
+    /\\\[[\s\S]+?\\\]/g,
+    /\\\([\s\S]+?\\\)/g,
+    /\$(?!\$)(?:\\.|[^$\\\n])+?\$/g,
+];
+
+function protectMath(text) {
+    const store = [];
+    let protectedText = String(text);
+    MATH_PATTERNS.forEach((pattern) => {
+        protectedText = protectedText.replace(pattern, (match) => {
+            const token = ` MATH${store.length} `;
+            store.push(match);
+            return token;
+        });
+    });
+    return { protectedText, store };
+}
+
+function restoreMath(html, store) {
+    // marked.js may trim/collapse the padding spaces around our token at
+    // block boundaries, so tolerate 0-1 whitespace chars on either side.
+    return html.replace(/\s?MATH(\d+)\s?/g, (_, i) => store[Number(i)] ?? "");
+}
+
 function formatMarkdown(text) {
-    if (window.marked) {
-        return marked.parse(text);
-    }
-    return String(text);
+    if (!window.marked) return String(text);
+    const { protectedText, store } = protectMath(text);
+    const html = marked.parse(protectedText);
+    return restoreMath(html, store);
 }
 
 function postProcessRichContent(wrapper) {
@@ -207,9 +446,15 @@ function postProcessRichContent(wrapper) {
         }
     }
 
-    if (window.MathJax) {
-        MathJax.typesetPromise([wrapper]).catch(err => console.log('MathJax error', err));
-    }
+    typesetMathJax(wrapper);
+}
+
+// Agent/judge card bodies stream in as plain text (not run through marked),
+// but MathJax scans raw text nodes for $...$/\(...\) delimiters directly, so
+// this alone is enough to render the LaTeX the model writes mid-reasoning.
+function typesetMathJax(...elements) {
+    if (!window.MathJax) return;
+    MathJax.typesetPromise(elements).catch(err => console.log('MathJax error', err));
 }
 
 function renderBubble(role, content, extraClass = "") {
@@ -311,6 +556,7 @@ function createSwarmPanel(gridEl, summaryEl) {
                 card.answer.classList.add("agent-card-answer-empty");
                 card.answer.textContent = "Sem resposta extraída";
             }
+            typesetMathJax(card.body, card.answer);
         },
         startJudge() {
             ensureCard("judge", "judge", true);
@@ -326,6 +572,7 @@ function createSwarmPanel(gridEl, summaryEl) {
             card.el.classList.add("status-done");
             card.answer.classList.remove("hidden");
             card.answer.textContent = answer ? `Decisão: ${answer}` : "Sem decisão";
+            typesetMathJax(card.body, card.answer);
         },
         startSummary() {
             summaryEl.classList.add("summary-loading");
@@ -498,21 +745,13 @@ async function sendMessage() {
   const text = messageInput.value.trim();
   if (!text || busy) return;
 
-  if (!currentConversationId || !conversations.find(c => c.id === currentConversationId)) {
-      createNewChat();
-  }
-
-  const conv = conversations.find(c => c.id === currentConversationId);
-
-  if (conv.messages.length === 0) {
+  if (currentMessages.length === 0) {
       chatWindow.innerHTML = "";
-      conv.title = text.substring(0, 30) + (text.length > 30 ? "..." : "");
-      renderSidebar();
   }
 
   renderBubble("user", text);
-  conv.messages.push({ role: "user", content: text });
-  saveConversations();
+  currentMessages.push({ role: "user", content: text });
+  persistConversation();
 
   const filesPayload = [...pendingFiles];
   pendingFiles = [];
@@ -544,8 +783,8 @@ async function sendMessage() {
     if (!response.ok) {
       const errJson = await response.json().catch(() => ({ error: "Falha ao comunicar com o backend." }));
       stream.showError(errJson.error || "Falha ao comunicar com o backend.");
-      conv.messages.push({ role: "assistant", content: errJson.error || "Falha ao comunicar com o backend.", extraClass: "error" });
-      saveConversations();
+      currentMessages.push({ role: "assistant", content: errJson.error || "Falha ao comunicar com o backend.", extraClass: "error" });
+      persistConversation();
       return;
     }
 
@@ -558,13 +797,13 @@ async function sendMessage() {
 
     stream.finalize(finalEvent);
     const finalMarkdown = buildFinalMarkdown(finalEvent);
-    conv.messages.push({ role: "assistant", content: finalMarkdown });
-    saveConversations();
+    currentMessages.push({ role: "assistant", content: finalMarkdown });
+    persistConversation();
 
   } catch (error) {
     stream.showError(error.message || "Erro de rede comunicando com o backend.");
-    conv.messages.push({ role: "assistant", content: error.message || "Erro de rede.", extraClass: "error" });
-    saveConversations();
+    currentMessages.push({ role: "assistant", content: error.message || "Erro de rede.", extraClass: "error" });
+    persistConversation();
   } finally {
     setBusy(false);
     messageInput.focus();
@@ -661,21 +900,14 @@ async function uploadList(file) {
     reader.onload = async (evt) => {
         const base64 = evt.target.result;
 
-        if (!currentConversationId || !conversations.find(c => c.id === currentConversationId)) {
-            createNewChat();
-        }
-        const conv = conversations.find(c => c.id === currentConversationId);
-
-        if (conv.messages.length === 0) {
+        if (currentMessages.length === 0) {
             chatWindow.innerHTML = "";
-            conv.title = "Lista: " + file.name;
-            renderSidebar();
         }
 
         const userMsg = `\u{1F4CE} Lista enviada: **${file.name}**`;
         renderBubble("user", userMsg);
-        conv.messages.push({ role: "user", content: userMsg });
-        saveConversations();
+        currentMessages.push({ role: "user", content: userMsg });
+        persistConversation();
 
         setBusy(true);
         const job = createListJobBubble(file.name);
@@ -708,8 +940,8 @@ async function uploadList(file) {
             const summaryMsg = pdfUrl
                 ? `✅ Lista **${file.name}** resolvida! [Baixar PDF resolvido](${pdfUrl})`
                 : `Lista **${file.name}** processada, mas nenhum PDF foi gerado.`;
-            conv.messages.push({ role: "assistant", content: summaryMsg });
-            saveConversations();
+            currentMessages.push({ role: "assistant", content: summaryMsg });
+            persistConversation();
         } catch (error) {
             job.showError(error.message || "Erro de rede ao processar a lista.");
         } finally {
@@ -728,11 +960,14 @@ messageInput.addEventListener("keydown", (event) => {
   }
 });
 
-if (conversations.length === 0) {
-    createNewChat();
-} else {
-    loadConversation(conversations[0].id);
-}
+(async function bootstrap() {
+    await fetchConversations();
+    if (conversations.length === 0) {
+        createNewChat();
+    } else {
+        loadConversation(conversations[0].id);
+    }
+})();
 
 refreshHealth();
 setInterval(refreshHealth, 5000);

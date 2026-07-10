@@ -12,6 +12,7 @@ import webbrowser
 from flask import Flask, Response, jsonify, render_template, request, send_file
 
 from ..config import AppConfig
+from ..conversation_store import ConversationStore, InvalidConversationId
 from ..list_parser import extract_text, llm_split_problems, split_into_problems
 from ..orchestrator import SwarmOrchestrator
 from ..pdf_report import SolvedProblem, build_solved_list_pdf
@@ -38,6 +39,7 @@ def create_app(config: AppConfig) -> Flask:
 
     solver = SwarmOrchestrator(config)
     list_jobs: dict[str, Path] = {}
+    conversations = ConversationStore(config.resolved_output_dir() / "conversations")
 
     def backend_snapshot() -> dict[str, str]:
         model = config.model
@@ -201,6 +203,57 @@ def create_app(config: AppConfig) -> Flask:
         if not path or not path.exists():
             return jsonify({"ok": False, "error": "PDF não encontrado ou expirado."}), 404
         return send_file(path, as_attachment=True, download_name="lista_resolvida.pdf")
+
+    @app.get("/api/conversations")
+    def list_conversations():
+        return jsonify({"ok": True, "conversations": conversations.list()})
+
+    @app.get("/api/conversations/<conv_id>")
+    def get_conversation(conv_id: str):
+        try:
+            data = conversations.get(conv_id)
+        except InvalidConversationId as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        if data is None:
+            return jsonify({"ok": False, "error": "Conversa não encontrada."}), 404
+        return jsonify({"ok": True, "conversation": data})
+
+    @app.put("/api/conversations/<conv_id>")
+    def save_conversation(conv_id: str):
+        payload = request.get_json(silent=True) or {}
+        title = str(payload.get("title", "Nova Conversa"))
+        messages = payload.get("messages", [])
+        if not isinstance(messages, list):
+            return jsonify({"ok": False, "error": "Formato de mensagens inválido."}), 400
+        try:
+            data = conversations.save(conv_id, title=title, messages=messages)
+        except InvalidConversationId as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        return jsonify({"ok": True, "conversation": data})
+
+    @app.patch("/api/conversations/<conv_id>")
+    def rename_conversation(conv_id: str):
+        payload = request.get_json(silent=True) or {}
+        title = str(payload.get("title", "")).strip()
+        if not title:
+            return jsonify({"ok": False, "error": "Título vazio."}), 400
+        try:
+            data = conversations.rename(conv_id, title)
+        except InvalidConversationId as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        if data is None:
+            return jsonify({"ok": False, "error": "Conversa não encontrada."}), 404
+        return jsonify({"ok": True, "conversation": data})
+
+    @app.delete("/api/conversations/<conv_id>")
+    def delete_conversation(conv_id: str):
+        try:
+            deleted = conversations.delete(conv_id)
+        except InvalidConversationId as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        if not deleted:
+            return jsonify({"ok": False, "error": "Conversa não encontrada."}), 404
+        return jsonify({"ok": True})
 
     return app
 
