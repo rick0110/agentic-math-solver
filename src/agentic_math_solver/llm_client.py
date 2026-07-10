@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 import json
 import re
@@ -45,6 +46,45 @@ class OpenAICompatibleClient:
             return ""
         message = choices[0].get("message", {})
         return message.get("content", "") or ""
+
+    def chat_stream(self, messages: list[dict[str, str]], *, temperature: float = 0.2, max_tokens: int = 2048) -> Iterator[str]:
+        payload: dict[str, Any] = {
+            "model": self.model_name,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+        data = json.dumps(payload).encode("utf-8")
+        req = request.Request(
+            f"{self.endpoint}/chat/completions",
+            data=data,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+                "Accept": "text/event-stream",
+            },
+            method="POST",
+        )
+        with request.urlopen(req, timeout=self.timeout_seconds) as resp:
+            for raw_line in resp:
+                line = raw_line.decode("utf-8", errors="ignore").strip()
+                if not line or not line.startswith("data:"):
+                    continue
+                chunk = line[len("data:"):].strip()
+                if chunk == "[DONE]":
+                    break
+                try:
+                    event = json.loads(chunk)
+                except json.JSONDecodeError:
+                    continue
+                choices = event.get("choices", [])
+                if not choices:
+                    continue
+                delta = choices[0].get("delta", {})
+                piece = delta.get("content")
+                if piece:
+                    yield piece
 
     def healthcheck(self) -> bool:
         req = request.Request(f"{self.endpoint}/models", method="GET")
@@ -155,6 +195,36 @@ class LocalCpuTransformersClient:
         generated = generated.strip()
         generated = re.sub(r"^Assistant:\s*", "", generated)
         return generated
+
+    def chat_stream(self, messages: list[dict[str, str]], *, temperature: float = 0.0, max_tokens: int = 256) -> Iterator[str]:
+        self._load()
+        assert self._tokenizer is not None and self._model is not None
+
+        try:
+            from transformers import TextIteratorStreamer
+        except ModuleNotFoundError as exc:
+            raise RuntimeError("CPU backend requires 'transformers'. Install with: pip install -e .[cpu]") from exc
+
+        max_context_tokens = self._max_context_tokens()
+        generation_tokens = max(1, min(max_tokens or self.max_new_tokens, max(16, max_context_tokens // 8)))
+        max_input_tokens = max(1, max_context_tokens - generation_tokens - 1)
+        inputs = self._build_inputs(messages, max_input_tokens)
+        inputs = {key: value.to(self.device) for key, value in inputs.items()}
+
+        streamer = TextIteratorStreamer(self._tokenizer, skip_prompt=True, skip_special_tokens=True)
+        generation_kwargs = dict(
+            inputs,
+            do_sample=False,
+            max_new_tokens=generation_tokens,
+            pad_token_id=self._tokenizer.eos_token_id,
+            streamer=streamer,
+        )
+        thread = threading.Thread(target=self._model.generate, kwargs=generation_kwargs, daemon=True)
+        thread.start()
+        for piece in streamer:
+            if piece:
+                yield piece
+        thread.join()
 
     def healthcheck(self) -> bool:
         try:

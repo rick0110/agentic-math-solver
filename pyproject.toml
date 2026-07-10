@@ -5,9 +5,13 @@ description = "A modular local-first multi-agent math solver with judge-based ar
 readme = "README.md"
 # Core dependencies remain light and engine-agnostic
 dependencies = [
-    "Flask", 
-    "duckduckgo-search", 
-    "mcp"
+    "Flask",
+    "duckduckgo-search",
+    "mcp",
+    "reportlab",
+    "pypdf",
+    "pymupdf",
+    "easyocr",
 ]
 
 [project.optional-dependencies]

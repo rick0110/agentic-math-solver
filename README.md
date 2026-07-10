@@ -1,6 +1,9 @@
 # Agentic Math Solver
 
-A modular, local-first multi-agent math solver equipped with tool-calling capabilities (ReAct-style reasoning) and a premium, responsive graphical interface. This project was evolved from an experimental monolithic notebook into a production-ready scaffold for discursive mathematical problem solving.
+The Agentic Math Solver is a multi-agent system designed to solve from simple to complex math problems. It was developed to help students solving problems in several levels of difficulty. The main proposal of this project is build an agentic system that run locally. Firstly, it only supports *CUDA* devices, but it will be extended to support CPU integrated devices. A future version of this software will be a mobile application to run in the integrated GPU of mobile devices (but it is importanto to highlight that the application will be heavyweight to run locally in mobile devices - so if we get any success in getting a partnership with a cloud provider, we will provide a cloud version of the application to run in mobile devices).
+
+## Motivation of the project
+This project was started with the *AIMO 3* competition, which required the development of an AI based solution to solve olimpic math problems. Despite industrial models reached at incredible results in math problem solving, they usually require massive computational resousces to run. In contrast, open source models are relatively lightweight and have good performance in language modeling. In addition, these models are usually fine-tuned to perform well in instruction following tasks and achieve very good results in math knowledge. The remaining problem is that these models frequently hallucinate. To resolve this problem, we developed a multi-agent system with tool integrated reasoning and self supervision to solve math problems rigorously. This approach achieve a score of 35 question in high difficulty olympic math problems in the *AIMO 3* competition, which is a very good result for a local solution. 
 
 ## Key Features
 

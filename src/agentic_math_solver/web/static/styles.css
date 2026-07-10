@@ -11,6 +11,11 @@
   --danger: #ef4444;
   --warning: #f59e0b;
   --success: #10b981;
+  --persona-formalist: #38bdf8;
+  --persona-architect: #a78bfa;
+  --persona-sentinel: #f59e0b;
+  --persona-oracle: #f472b6;
+  --persona-judge: #10a37f;
 }
 
 /* Custom Scrollbar */
@@ -350,6 +355,175 @@ code {
   50% { transform: rotateY(180deg); color: #fff; }
   100% { transform: rotateY(360deg); }
 }
+
+/* Swarm panel: live agent cards streamed via NDJSON */
+.swarm-status {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-bottom: 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.swarm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.8rem;
+  margin-bottom: 1rem;
+}
+
+.agent-card {
+  --accent: var(--primary);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  padding: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-height: 90px;
+  transition: border-color 0.3s ease, opacity 0.3s ease;
+}
+.agent-card.persona-formalist { --accent: var(--persona-formalist); }
+.agent-card.persona-architect { --accent: var(--persona-architect); }
+.agent-card.persona-sentinel { --accent: var(--persona-sentinel); }
+.agent-card.persona-oracle { --accent: var(--persona-oracle); }
+.agent-card.judge-card { --accent: var(--persona-judge); background: rgba(16, 163, 127, 0.06); }
+
+.agent-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-main);
+}
+.agent-icon { font-size: 1rem; }
+.agent-name { flex: 1; }
+
+.agent-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.status-running .agent-status-dot {
+  animation: pulseDot 1.2s ease-in-out infinite;
+}
+.status-done .agent-status-dot {
+  background: var(--success);
+  animation: none;
+}
+@keyframes pulseDot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.7); }
+}
+
+.agent-card-body {
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+  max-height: 140px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: "SFMono-Regular", Consolas, monospace;
+}
+
+.agent-card-tool {
+  font-size: 0.72rem;
+  color: var(--warning);
+  background: rgba(245, 158, 11, 0.1);
+  border-radius: 6px;
+  padding: 0.3rem 0.5rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.agent-card-tool.hidden { display: none; }
+
+.agent-card-answer {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--accent);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 0.4rem;
+}
+.agent-card-answer.hidden { display: none; }
+.agent-card-answer-empty {
+  color: var(--text-muted);
+  font-weight: 400;
+  font-style: italic;
+}
+
+.summary-markdown {
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.summary-markdown.summary-loading {
+  color: var(--text-muted);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+}
+.error-text {
+  color: var(--danger);
+  font-size: 0.9rem;
+}
+
+/* List solver ("Resolver Lista") */
+.list-job-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.95rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+.list-progress {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+  padding: 0.2rem 0.7rem;
+}
+.list-questions {
+  display: flex;
+  flex-direction: column;
+  gap: 1.2rem;
+}
+.list-question {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 0.9rem;
+  background: rgba(0, 0, 0, 0.12);
+}
+.list-question-header {
+  font-weight: 600;
+  font-size: 0.88rem;
+  margin-bottom: 0.7rem;
+  color: var(--text-main);
+}
+.list-download {
+  margin-top: 1.2rem;
+}
+.list-download.hidden { display: none; }
+.download-pdf-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: var(--primary);
+  color: #fff;
+  padding: 0.6rem 1.1rem;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  text-decoration: none;
+  transition: background 0.2s ease;
+}
+.download-pdf-btn:hover { background: var(--accent); }
 
 /* Empty State / Welcome Screen */
 .welcome-screen {
