@@ -1,0 +1,16 @@
+{
+  "id": "1783708950777",
+  "title": "📎 Lista enviada: **mit18_05_s22_pset01....",
+  "messages": [
+    {
+      "role": "user",
+      "content": "📎 Lista enviada: **mit18_05_s22_pset01.pdf**"
+    },
+    {
+      "role": "assistant",
+      "content": "✅ Lista **mit18_05_s22_pset01.pdf** resolvida! [Baixar PDF resolvido](/api/list/download/e1e5f82fc81b40aaa0b7de957fd36b64)"
+    }
+  ],
+  "created_at": "2026-07-10T18:42:31.422064+00:00",
+  "updated_at": "2026-07-10T18:43:35.870663+00:00"
+}
