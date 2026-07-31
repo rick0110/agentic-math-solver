@@ -211,6 +211,50 @@ html, body {
   color: var(--text-muted);
 }
 
+.backend-meta {
+  margin-top: 0.6rem;
+}
+
+.backend-meta summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  user-select: none;
+}
+
+.backend-meta summary:hover {
+  color: var(--text-main);
+}
+
+.backend-meta-list {
+  margin: 0.5rem 0 0 0;
+  padding: 0.5rem;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.backend-meta-list dt {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  margin-top: 0.4rem;
+}
+
+.backend-meta-list dt:first-child {
+  margin-top: 0;
+}
+
+.backend-meta-list dd {
+  margin: 0;
+  font-size: 0.78rem;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  color: var(--text-main);
+  word-break: break-all;
+}
+
 .chat-pane {
   flex: 1;
   display: flex;

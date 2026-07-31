@@ -49,11 +49,19 @@ def create_app(config: AppConfig) -> Flask:
             "model_name": model.model_name,
             "model_id": model.model_id,
             "device": model.device,
+            "torch_dtype": model.torch_dtype,
             "weights_source": model.weights_source,
             "weights_path": model.weights_path or "not set",
+            "temperature": model.temperature,
+            "max_tokens": model.max_tokens,
+            "timeout_seconds": model.timeout_seconds,
+            "agent_count": config.agent_count,
+            "use_judge": config.use_judge,
             "prompt_dir": str(config.resolved_prompt_dir()),
             "output_dir": str(config.resolved_output_dir()),
         }
+        # Nunca inclua model.api_key aqui — esse dict é enviado ao navegador (e pode estar
+        # atrás de um túnel público), e a chave não deve vazar mesmo sendo "EMPTY" por padrão.
 
     def apply_options(options: dict) -> None:
         if not options:

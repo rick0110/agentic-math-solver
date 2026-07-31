@@ -25,11 +25,11 @@ let busy = false;
 let pendingFiles = [];
 
 const PERSONA_META = {
-  formalist: { icon: "\u{1F4D0}", label: "Formalist" },
-  architect: { icon: "\u{1F3DB}️", label: "Architect" },
-  sentinel: { icon: "\u{1F6E1}️", label: "Sentinel" },
-  oracle: { icon: "\u{1F52E}", label: "Oracle" },
-  judge: { icon: "⚖️", label: "Judge" },
+  formalist: { icon: "\u{1F4D0}", label: "Agente 1" },
+  architect: { icon: "\u{1F3DB}️", label: "Agente 2" },
+  sentinel: { icon: "\u{1F6E1}️", label: "Agente 3" },
+  oracle: { icon: "\u{1F52E}", label: "Agente 4" },
+  judge: { icon: "⚖️", label: "Juiz" },
 };
 
 function personaMeta(key) {
@@ -724,6 +724,40 @@ function setBusy(value) {
   messageInput.disabled = value;
 }
 
+const BACKEND_META_LABELS = {
+  backend: "Backend",
+  endpoint: "Endpoint",
+  model_name: "Model name",
+  model_id: "Model ID",
+  device: "Device",
+  torch_dtype: "Torch dtype",
+  weights_source: "Weights source",
+  weights_path: "Weights path",
+  temperature: "Temperature",
+  max_tokens: "Max tokens",
+  timeout_seconds: "Timeout (s)",
+  agent_count: "Agent count",
+  use_judge: "Judge enabled",
+  prompt_dir: "Prompt dir",
+  output_dir: "Output dir",
+};
+
+const backendMetaList = document.getElementById("backend-meta-list");
+
+function renderBackendMeta(backend) {
+  if (!backend || !backendMetaList) return;
+  backendMetaList.innerHTML = "";
+  for (const [key, label] of Object.entries(BACKEND_META_LABELS)) {
+    if (!(key in backend)) continue;
+    const dt = document.createElement("dt");
+    dt.textContent = label;
+    const dd = document.createElement("dd");
+    dd.textContent = String(backend[key]);
+    backendMetaList.appendChild(dt);
+    backendMetaList.appendChild(dd);
+  }
+}
+
 async function refreshHealth() {
   try {
     const response = await fetch("/api/health");
@@ -735,6 +769,7 @@ async function refreshHealth() {
       healthPill.textContent = "Model Offline";
       healthPill.className = "pill pill-warn";
     }
+    renderBackendMeta(data.backend);
   } catch (error) {
     healthPill.textContent = "Backend Offline";
     healthPill.className = "pill pill-bad";
@@ -969,5 +1004,6 @@ messageInput.addEventListener("keydown", (event) => {
     }
 })();
 
+renderBackendMeta(window.AMS_BACKEND);
 refreshHealth();
 setInterval(refreshHealth, 5000);
