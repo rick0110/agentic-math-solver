@@ -25,11 +25,12 @@ class JudgeAgent:
         judge_prompt = prompts.load("judge")
         summary_lines = []
         for result in candidate_results:
+            boxed = result.answer or "none — see full derivation below"
             summary_lines.append(
                 f"Agent: {result.agent_name}\n"
                 f"Persona: {result.persona}\n"
-                f"Answer: {result.answer}\n"
-                f"Summary: {result.summary}"
+                f"Boxed answer: {boxed}\n"
+                f"Full reasoning:\n{result.raw_response}"
             )
         user_prompt = (
             f"Problem:\n{problem}\n\n"

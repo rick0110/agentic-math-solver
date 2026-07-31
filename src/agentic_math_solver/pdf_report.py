@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from xml.sax.saxutils import escape
@@ -26,9 +26,6 @@ class SolvedProblem:
     statement: str
     final_answer: str
     educational_summary: str
-    used_judge: bool = False
-    vote_counts: dict[str, int] = field(default_factory=dict)
-    agent_summaries: list[tuple[str, str, str | None]] = field(default_factory=list)  # (agent, persona, answer)
 
 
 def _inline_markup(text: str) -> str:
@@ -80,7 +77,6 @@ def _build_styles() -> dict:
         "Bullet": ParagraphStyle("Bullet", parent=base["BodyText"], fontSize=10.5, leading=15, leftIndent=12),
         "Statement": ParagraphStyle("Statement", parent=base["BodyText"], fontSize=11, leading=16, backColor=colors.HexColor("#f2f7f5"), borderPadding=8),
         "Answer": ParagraphStyle("Answer", parent=base["BodyText"], fontSize=13, textColor=colors.white, alignment=1),
-        "AgentLabel": ParagraphStyle("AgentLabel", parent=base["BodyText"], fontSize=9.5, textColor=colors.HexColor("#444444")),
     }
 
 
@@ -114,30 +110,12 @@ def build_solved_list_pdf(
     story.append(HRFlowable(width="100%", color=colors.HexColor("#10a37f"), thickness=1.2))
     story.append(Spacer(1, 0.6 * cm))
 
+    # Documento é a lista resolvida em si (pronta pra entrega/envio) — só enunciado,
+    # resposta final e a solução. Nada de bastidores do swarm (votos, juiz, agentes).
     for problem in problems:
         story.append(Paragraph(f"Questão {problem.index}", styles["H1"]))
         story.append(Paragraph(_inline_markup(problem.statement), styles["Statement"]))
         story.append(Spacer(1, 0.3 * cm))
-
-        if problem.agent_summaries:
-            rows = [["Agente", "Persona", "Resposta"]]
-            for agent_name, persona, answer in problem.agent_summaries:
-                rows.append([agent_name, persona, answer or "—"])
-            table = Table(rows, colWidths=[3.5 * cm, 4 * cm, 6.5 * cm])
-            table.setStyle(
-                TableStyle(
-                    [
-                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#10a37f")),
-                        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                        ("FONTSIZE", (0, 0), (-1, -1), 9),
-                        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#dddddd")),
-                        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f7f7f7")]),
-                        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                    ]
-                )
-            )
-            story.append(table)
-            story.append(Spacer(1, 0.3 * cm))
 
         answer_table = Table(
             [[Paragraph(f"Resposta Final: {escape(problem.final_answer or 'N/A')}", styles["Answer"])]],
@@ -155,11 +133,6 @@ def build_solved_list_pdf(
         )
         story.append(answer_table)
         story.append(Spacer(1, 0.3 * cm))
-
-        if problem.used_judge:
-            votes = ", ".join(f"{ans}: {count}" for ans, count in problem.vote_counts.items())
-            story.append(Paragraph(f"<i>Consenso não unânime (votos: {escape(votes)}) — decisão de um agente Juiz.</i>", styles["Body"]))
-            story.append(Spacer(1, 0.2 * cm))
 
         story.append(Paragraph("Solução passo a passo", styles["H2"]))
         story.extend(_markdown_to_flowables(problem.educational_summary, styles))

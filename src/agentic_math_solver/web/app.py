@@ -161,11 +161,9 @@ def create_app(config: AppConfig) -> Flask:
 
             solved: list[SolvedProblem] = []
             for idx, statement in enumerate(problems_text, start=1):
-                agent_results = []
                 final_info = None
                 for event in solver.solve_stream(statement):
-                    if event["type"] == "_agent_results":
-                        agent_results = event["results"]
+                    if event["type"].startswith("_"):
                         continue
                     if event["type"] == "final":
                         final_info = event
@@ -180,9 +178,6 @@ def create_app(config: AppConfig) -> Flask:
                         statement=statement,
                         final_answer=final_info["final_answer"],
                         educational_summary=final_info["educational_summary"],
-                        used_judge=final_info["used_judge"],
-                        vote_counts=final_info["vote_counts"],
-                        agent_summaries=[(r.agent_name, r.persona, r.answer) for r in agent_results],
                     )
                 )
 

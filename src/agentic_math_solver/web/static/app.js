@@ -554,7 +554,7 @@ function createSwarmPanel(gridEl, summaryEl) {
             } else {
                 card.answer.classList.remove("hidden");
                 card.answer.classList.add("agent-card-answer-empty");
-                card.answer.textContent = "Sem resposta extraída";
+                card.answer.textContent = "Demonstração formal completa (ver acima)";
             }
             typesetMathJax(card.body, card.answer);
         },

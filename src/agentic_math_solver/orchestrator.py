@@ -6,6 +6,7 @@ import queue
 import threading
 from typing import Any
 
+from .agents.extractor import ExtractorAgent
 from .agents.judge import JudgeAgent
 from .agents.swarm import SwarmAgent
 from .config import AppConfig
@@ -34,6 +35,7 @@ class SwarmOrchestrator:
                 timeout_seconds=config.model.timeout_seconds,
             )
         self.judge = JudgeAgent()
+        self.extractor = ExtractorAgent()
         self._all_agents = [
             SwarmAgent("agent-1", "formalist"),
             SwarmAgent("agent-2", "architect"),
@@ -64,9 +66,38 @@ class SwarmOrchestrator:
                     max_tokens=self.config.model.max_tokens,
                     temperature=self.config.model.temperature,
                 ):
-                    event_queue.put(event)
-                    if event["type"] == "agent_done":
-                        final_event = event
+                    if event["type"] != "agent_done":
+                        event_queue.put(event)
+                        continue
+
+                    final_event = event
+                    # Sem \boxed{} no regex: pode ser uma demonstração formal de
+                    # verdade, ou o modelo pequeno pode ter esquecido de formatar uma
+                    # resposta curta que já tinha. Um extrator dedicado decide, em vez
+                    # de confiar cegamente no que o regex não achou.
+                    if event["answer"] is None and event["raw_response"].strip():
+                        event_queue.put({
+                            "type": "agent_tool_start",
+                            "agent": agent.agent_name,
+                            "tool": "extractor",
+                            "input": "",
+                        })
+                        kind, extracted_answer, _ = self.extractor.extract(
+                            problem,
+                            event["raw_response"],
+                            self.client,
+                            self.prompts,
+                            max_tokens=self.config.model.max_tokens,
+                        )
+                        preview = extracted_answer if kind == "boxed" else "demonstração formal confirmada (sem valor curto)"
+                        event_queue.put({
+                            "type": "agent_tool_result",
+                            "agent": agent.agent_name,
+                            "tool": "extractor",
+                            "output": preview,
+                        })
+                        final_event = {**event, "answer": extracted_answer if kind == "boxed" else None}
+                    event_queue.put(final_event)
             except Exception as exc:
                 final_event = {
                     "type": "agent_done",
@@ -106,11 +137,8 @@ class SwarmOrchestrator:
         results = [agent_results[agent.agent_name] for agent in self.agents if agent.agent_name in agent_results]
         yield {"type": "_agent_results", "results": results}
 
-        answers = [result.answer for result in results if result.answer is not None]
-        vote_counts = Counter(answers)
-
-        if not vote_counts:
-            message = "O sistema falhou em extrair uma solução válida do modelo."
+        if not results or all(not result.raw_response.strip() for result in results):
+            message = "O sistema falhou em obter qualquer resposta utilizável do modelo."
             yield {"type": "summary_start"}
             yield {"type": "summary_token", "delta": message}
             yield {"type": "summary_done"}
@@ -119,17 +147,32 @@ class SwarmOrchestrator:
                 "final_answer": "Não foi possível chegar a uma resposta final.",
                 "used_judge": False,
                 "vote_counts": {},
-                "judge_notes": "No agent produced a parseable answer.",
+                "judge_notes": "Nenhum agente produziu uma resposta utilizável.",
                 "educational_summary": message,
             }
             return
 
-        top_answer, top_votes = vote_counts.most_common(1)[0]
-        final_answer = normalize_answer(top_answer)
+        # Nem todo problema tem uma resposta curta/numérica: um agente pode
+        # legitimamente devolver só a demonstração formal completa (sem \boxed{})
+        # quando é isso que o problema pede — ver prompts/system.md.
+        answers = [result.answer for result in results if result.answer is not None]
+        vote_counts = Counter(answers)
+
+        # Precisa de revisão completa do Juiz quando: ninguém deu resposta curta, os
+        # agentes discordam sobre SE a resposta é curta (mistura de boxed/sem-boxed),
+        # ou há discordância de valor sem maioria forte entre quem deu resposta curta.
+        disagreement = (
+            not vote_counts
+            or len(answers) < len(results)
+            or (len(vote_counts) > 1 and vote_counts.most_common(1)[0][1] < 3)
+        )
+
         used_judge = False
         judge_notes = ""
+        judge_raw_text = ""
+        final_answer = normalize_answer(vote_counts.most_common(1)[0][0]) if vote_counts else None
 
-        if len(vote_counts) > 1 and top_votes < 3 and self.config.use_judge:
+        if disagreement and self.config.use_judge:
             used_judge = True
             judge_answer = None
             for event in self.judge.decide_stream(
@@ -144,15 +187,26 @@ class SwarmOrchestrator:
                 if event["type"] == "judge_done":
                     judge_answer = event["answer"]
                     judge_notes = event["notes"]
+                    judge_raw_text = event["notes"]
             if judge_answer is not None:
                 final_answer = normalize_answer(judge_answer)
 
         summary = ""
-        yield {"type": "summary_start"}
-        for piece in self._stream_educational_summary(problem, final_answer):
-            summary += piece
-            yield {"type": "summary_token", "delta": piece}
-        yield {"type": "summary_done"}
+        if final_answer is not None:
+            yield {"type": "summary_start"}
+            for piece in self._stream_educational_summary(problem, final_answer):
+                summary += piece
+                yield {"type": "summary_token", "delta": piece}
+            yield {"type": "summary_done"}
+        else:
+            # Modo "demonstração formal": não existe um valor curto pra explicar — a
+            # própria solução completa (do Juiz, se rodou, senão a resposta bruta mais
+            # longa do swarm) já é a resposta final, sem gerar uma segunda paráfrase.
+            summary = judge_raw_text or max(results, key=lambda r: len(r.raw_response)).raw_response
+            final_answer = "Ver solução passo a passo abaixo"
+            yield {"type": "summary_start"}
+            yield {"type": "summary_token", "delta": summary}
+            yield {"type": "summary_done"}
 
         yield {
             "type": "final",

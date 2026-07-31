@@ -70,3 +70,23 @@ def extract_and_run_tools(response: str) -> tuple[str | None, str | None]:
     if tool_name is None:
         return None, None
     return tool_name, run_tool(tool_name, tool_input)
+
+
+_JOURNAL_PATTERN = re.compile(r"```journal\n(.*?)\n```", re.DOTALL)
+
+
+def extract_journal_update(response: str) -> dict | None:
+    """Looks for a ```journal {...}``` block (proven_lemmas/dead_ends/current_hypothesis).
+
+    Returns the parsed dict, or None if there's no journal block or it isn't valid JSON —
+    a malformed journal from a small model should never crash the agent loop, it should
+    just mean "no update this turn".
+    """
+    match = _JOURNAL_PATTERN.search(response)
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
