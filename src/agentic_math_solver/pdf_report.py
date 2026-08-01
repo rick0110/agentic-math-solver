@@ -110,8 +110,6 @@ def build_solved_list_pdf(
     story.append(HRFlowable(width="100%", color=colors.HexColor("#10a37f"), thickness=1.2))
     story.append(Spacer(1, 0.6 * cm))
 
-    # Documento é a lista resolvida em si (pronta pra entrega/envio) — só enunciado,
-    # resposta final e a solução. Nada de bastidores do swarm (votos, juiz, agentes).
     for problem in problems:
         story.append(Paragraph(f"Questão {problem.index}", styles["H1"]))
         story.append(Paragraph(_inline_markup(problem.statement), styles["Statement"]))

@@ -242,7 +242,8 @@ class SwarmOrchestrator:
                 "role": "system",
                 "content": (
                     "Você é um professor de matemática experiente e didático. Sua tarefa é pegar um problema e sua "
-                    "resposta final, e produzir uma explicação passo a passo excelente. Use Markdown, caixas de "
+                    "resposta final, e produzir uma explicação passo a passo excelente que exponha o raciocícnio passo "
+                    "a passo de modo formal e justificando cada passo matematico. Use Markdown, caixas de "
                     "código e equações matemáticas (no formato LaTeX com $$ ou $). Resuma a lógica de forma clara e "
                     "educativa."
                 ),

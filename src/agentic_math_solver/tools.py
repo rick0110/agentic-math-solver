@@ -29,7 +29,7 @@ def run_web_search(query: str) -> str:
     except Exception as e:
         return f"Search failed: {e}"
 
-def run_mcp_query(query: str) -> str:
+def run_mcp_query(query: str) -> str: # It will be implemented later ...
     try:
         import mcp
         return f"MCP query executed successfully. Context retrieved for: {query}"
