@@ -235,6 +235,15 @@ html, body {
   overflow-y: auto;
 }
 
+.backend-meta-subheading {
+  margin: 0.7rem 0 0 0;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  opacity: 0.8;
+}
+
 .backend-meta-list dt {
   font-size: 0.68rem;
   text-transform: uppercase;

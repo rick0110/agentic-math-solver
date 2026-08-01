@@ -36,6 +36,16 @@ function personaMeta(key) {
   return PERSONA_META[key] || { icon: "\u{1F916}", label: key || "Agent" };
 }
 
+function collectRequestOptions() {
+  return {
+    model: document.getElementById("model-input").value,
+    thinking: document.getElementById("thinking-select").value,
+    temperature: document.getElementById("temperature-input").value,
+    top_p: document.getElementById("top-p-input").value,
+    top_k: document.getElementById("top-k-input").value,
+  };
+}
+
 plusBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     optionsMenu.classList.toggle("hidden");
@@ -734,6 +744,8 @@ const BACKEND_META_LABELS = {
   weights_source: "Weights source",
   weights_path: "Weights path",
   temperature: "Temperature",
+  top_p: "Top-p",
+  top_k: "Top-k",
   max_tokens: "Max tokens",
   timeout_seconds: "Timeout (s)",
   agent_count: "Agent count",
@@ -755,6 +767,50 @@ function renderBackendMeta(backend) {
     dd.textContent = String(backend[key]);
     backendMetaList.appendChild(dt);
     backendMetaList.appendChild(dd);
+  }
+}
+
+const BACKEND_STATS_LABELS = {
+  running_requests: "Requisições rodando",
+  waiting_requests: "Requisições na fila",
+  gpu_cache_usage_percent: "Uso do KV cache (GPU)",
+  generation_tokens_per_sec: "Tokens/s (geração)",
+  prompt_tokens_per_sec: "Tokens/s (prompt)",
+};
+
+const backendStatsList = document.getElementById("backend-stats-list");
+
+function formatStatValue(key, value) {
+  if (value === null || value === undefined) return "—";
+  if (key.endsWith("_per_sec")) return `${value.toFixed(1)} tok/s`;
+  // vLLM reporta gpu_cache_usage_perc já como percentual (0-100), apesar do nome —
+  // confira contra o /metrics bruto do seu servidor se os números parecerem estranhos.
+  if (key === "gpu_cache_usage_percent") return `${value.toFixed(1)}%`;
+  return String(Math.round(value));
+}
+
+function renderBackendStats(stats) {
+  if (!backendStatsList) return;
+  backendStatsList.innerHTML = "";
+  if (!stats) return;
+  for (const [key, label] of Object.entries(BACKEND_STATS_LABELS)) {
+    if (!(key in stats)) continue;
+    const dt = document.createElement("dt");
+    dt.textContent = label;
+    const dd = document.createElement("dd");
+    dd.textContent = formatStatValue(key, stats[key]);
+    backendStatsList.appendChild(dt);
+    backendStatsList.appendChild(dd);
+  }
+}
+
+async function refreshBackendStats() {
+  try {
+    const response = await fetch("/api/backend/stats");
+    const data = await response.json();
+    renderBackendStats(data.ok ? data.stats : null);
+  } catch (error) {
+    renderBackendStats(null);
   }
 }
 
@@ -799,19 +855,13 @@ async function sendMessage() {
   const stream = createStreamBubble();
 
   try {
-    const modelInput = document.getElementById("model-input").value;
-    const thinkingSelect = document.getElementById("thinking-select").value;
-
     const response = await fetch("/api/chat/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
           message: text,
           files: filesPayload,
-          options: {
-              model: modelInput,
-              thinking: thinkingSelect
-          }
+          options: collectRequestOptions()
       }),
     });
 
@@ -948,15 +998,12 @@ async function uploadList(file) {
         const job = createListJobBubble(file.name);
 
         try {
-            const modelInput = document.getElementById("model-input").value;
-            const thinkingSelect = document.getElementById("thinking-select").value;
-
             const response = await fetch("/api/list/upload", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     file: { name: file.name, data: base64 },
-                    options: { model: modelInput, thinking: thinkingSelect },
+                    options: collectRequestOptions(),
                 }),
             });
 
@@ -1006,4 +1053,6 @@ messageInput.addEventListener("keydown", (event) => {
 
 renderBackendMeta(window.AMS_BACKEND);
 refreshHealth();
+refreshBackendStats();
 setInterval(refreshHealth, 5000);
+setInterval(refreshBackendStats, 5000);

@@ -65,6 +65,8 @@ class SwarmOrchestrator:
                     self.prompts,
                     max_tokens=self.config.model.max_tokens,
                     temperature=self.config.model.temperature,
+                    top_p=self.config.model.top_p,
+                    top_k=self.config.model.top_k,
                 ):
                     if event["type"] != "agent_done":
                         event_queue.put(event)
@@ -182,6 +184,8 @@ class SwarmOrchestrator:
                 self.prompts,
                 max_tokens=self.config.model.max_tokens,
                 temperature=max(0.0, min(0.4, self.config.model.temperature)),
+                top_p=self.config.model.top_p,
+                top_k=self.config.model.top_k,
             ):
                 yield event
                 if event["type"] == "judge_done":
@@ -254,6 +258,12 @@ class SwarmOrchestrator:
             },
         ]
         try:
-            yield from self.client.chat_stream(messages, temperature=0.3, max_tokens=self.config.model.max_tokens)
+            yield from self.client.chat_stream(
+                messages,
+                temperature=0.3,
+                max_tokens=self.config.model.max_tokens,
+                top_p=self.config.model.top_p,
+                top_k=self.config.model.top_k,
+            )
         except Exception as exc:
             yield f"Erro ao gerar resumo educacional: {str(exc)}"

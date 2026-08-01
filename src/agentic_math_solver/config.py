@@ -17,6 +17,8 @@ class ModelConfig:
     weights_path: str = ""
     api_key: str = "EMPTY"
     temperature: float = 0.2
+    top_p: float | None = None
+    top_k: int | None = None
     max_tokens: int = 2048
     timeout_seconds: int = 120
 
@@ -46,6 +48,8 @@ class AppConfig:
             weights_path=os.getenv("AGEMATH_MODEL_WEIGHTS_PATH", ""),
             api_key=os.getenv("AGEMATH_API_KEY", "EMPTY"),
             temperature=float(os.getenv("AGEMATH_TEMPERATURE", "0.2")),
+            top_p=(float(os.getenv("AGEMATH_TOP_P")) if os.getenv("AGEMATH_TOP_P") else None),
+            top_k=(int(os.getenv("AGEMATH_TOP_K")) if os.getenv("AGEMATH_TOP_K") else None),
             max_tokens=int(os.getenv("AGEMATH_MAX_TOKENS", "2048")),
             timeout_seconds=int(os.getenv("AGEMATH_TIMEOUT_SECONDS", "120")),
         )

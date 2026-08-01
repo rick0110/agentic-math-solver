@@ -6,7 +6,12 @@ from typing import Any
 
 from ..llm_client import OpenAICompatibleClient
 from ..prompts import PromptLibrary
-from ..utils import extract_answer, normalize_answer
+from ..utils import extract_answer, normalize_answer, truncate_preserving_ends
+
+# Só 1 candidato por chamada aqui (vs. até 4 no Juiz), então o orçamento pode ser mais
+# generoso — mas um único raw_response já pode sozinho passar do contexto do modelo se o
+# agente usou os 5 passos de tool call, então ainda precisa truncar. Ver judge.py.
+_MAX_RAW_RESPONSE_CHARS = 3000
 
 
 @dataclass(slots=True)
@@ -30,7 +35,8 @@ class ExtractorAgent:
         temperature: float = 0.0,
     ) -> Iterator[dict[str, Any]]:
         system_prompt = prompts.load("extractor")
-        user_prompt = f"Problem:\n{problem}\n\nAgent's raw response:\n{raw_response}"
+        truncated_response = truncate_preserving_ends(raw_response, _MAX_RAW_RESPONSE_CHARS)
+        user_prompt = f"Problem:\n{problem}\n\nAgent's raw response:\n{truncated_response}"
 
         yield {"type": "extractor_start"}
 

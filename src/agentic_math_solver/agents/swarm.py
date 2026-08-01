@@ -28,7 +28,15 @@ class SwarmAgent:
     persona_key: str
 
     def run_stream(
-        self, problem: str, client: OpenAICompatibleClient, prompts: PromptLibrary, *, max_tokens: int, temperature: float
+        self,
+        problem: str,
+        client: OpenAICompatibleClient,
+        prompts: PromptLibrary,
+        *,
+        max_tokens: int,
+        temperature: float,
+        top_p: float | None = None,
+        top_k: int | None = None,
     ) -> Iterator[dict[str, Any]]:
         from ..tools import extract_journal_update, extract_tool_call, run_tool
 
@@ -68,7 +76,7 @@ class SwarmAgent:
 
         for step in range(5):
             response = ""
-            for piece in client.chat_stream(messages, temperature=temperature, max_tokens=max_tokens):
+            for piece in client.chat_stream(messages, temperature=temperature, max_tokens=max_tokens, top_p=top_p, top_k=top_k):
                 response += piece
                 yield {"type": "agent_token", "agent": self.agent_name, "delta": piece}
 
@@ -122,9 +130,22 @@ class SwarmAgent:
             "trace": trace,
         }
 
-    def run(self, problem: str, client: OpenAICompatibleClient, prompts: PromptLibrary, *, max_tokens: int, temperature: float) -> AgentResult:
+    def run(
+        self,
+        problem: str,
+        client: OpenAICompatibleClient,
+        prompts: PromptLibrary,
+        *,
+        max_tokens: int,
+        temperature: float,
+        top_p: float | None = None,
+        top_k: int | None = None,
+    ) -> AgentResult:
         final_event: dict[str, Any] | None = None
-        for event in self.run_stream(problem, client, prompts, max_tokens=max_tokens, temperature=temperature):
+        for event in self.run_stream(
+            problem, client, prompts,
+            max_tokens=max_tokens, temperature=temperature, top_p=top_p, top_k=top_k,
+        ):
             if event["type"] == "agent_done":
                 final_event = event
 

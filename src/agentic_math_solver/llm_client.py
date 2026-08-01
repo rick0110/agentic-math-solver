@@ -22,12 +22,30 @@ class OpenAICompatibleClient:
         self.api_key = api_key
         self.timeout_seconds = timeout_seconds
 
-    def chat(self, messages: list[dict[str, str]], *, temperature: float = 0.2, max_tokens: int = 2048) -> str:
+    def _sampling_extra(self, top_p: float | None, top_k: int | None) -> dict[str, Any]:
+        
+        extra: dict[str, Any] = {}
+        if top_p is not None:
+            extra["top_p"] = top_p
+        if top_k is not None:
+            extra["top_k"] = top_k
+        return extra
+
+    def chat(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float = 0.2,
+        max_tokens: int = 2048,
+        top_p: float | None = None,
+        top_k: int | None = None,
+    ) -> str:
         payload: dict[str, Any] = {
             "model": self.model_name,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
+            **self._sampling_extra(top_p, top_k),
         }
         data = json.dumps(payload).encode("utf-8")
         req = request.Request(
@@ -47,13 +65,22 @@ class OpenAICompatibleClient:
         message = choices[0].get("message", {})
         return message.get("content", "") or ""
 
-    def chat_stream(self, messages: list[dict[str, str]], *, temperature: float = 0.2, max_tokens: int = 2048) -> Iterator[str]:
+    def chat_stream(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float = 0.2,
+        max_tokens: int = 2048,
+        top_p: float | None = None,
+        top_k: int | None = None,
+    ) -> Iterator[str]:
         payload: dict[str, Any] = {
             "model": self.model_name,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": True,
+            **self._sampling_extra(top_p, top_k),
         }
         data = json.dumps(payload).encode("utf-8")
         req = request.Request(
@@ -104,6 +131,15 @@ class LocalCpuTransformersClient:
         self._tokenizer = None
         self._model = None
         self._load_lock = threading.Lock()
+
+    def _sampling_kwargs(self, top_p: float | None, top_k: int | None) -> dict[str, Any]:
+        # Igual `temperature`: sem estado guardado no client, só o que a chamada passa.
+        kwargs: dict[str, Any] = {}
+        if top_p is not None:
+            kwargs["top_p"] = top_p
+        if top_k is not None:
+            kwargs["top_k"] = top_k
+        return kwargs
 
     def _load(self) -> None:
         if self._tokenizer is not None and self._model is not None:
@@ -160,7 +196,15 @@ class LocalCpuTransformersClient:
         prompt = self._build_prompt(messages)
         return self._tokenizer(prompt, return_tensors="pt", truncation=True, max_length=max_input_tokens)
 
-    def chat(self, messages: list[dict[str, str]], *, temperature: float = 0.0, max_tokens: int = 256) -> str:
+    def chat(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float = 0.0,
+        max_tokens: int = 256,
+        top_p: float | None = None,
+        top_k: int | None = None,
+    ) -> str:
         self._load()
         assert self._tokenizer is not None and self._model is not None
 
@@ -178,9 +222,11 @@ class LocalCpuTransformersClient:
         with torch.no_grad():
             output_ids = self._model.generate(
                 **inputs,
-                do_sample=False,
+                do_sample=True,
+                temperature=temperature,
                 max_new_tokens=generation_tokens,
                 pad_token_id=self._tokenizer.eos_token_id,
+                **self._sampling_kwargs(top_p, top_k),
             )
 
         generated = self._tokenizer.decode(output_ids[0], skip_special_tokens=True)
@@ -190,13 +236,21 @@ class LocalCpuTransformersClient:
                 rendered_prompt = self._tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             except Exception:
                 rendered_prompt = None
-        if rendered_prompt and generated.startswith(rendered_prompt):
+        if rendered_prompt:
             generated = generated[len(rendered_prompt):]
         generated = generated.strip()
         generated = re.sub(r"^Assistant:\s*", "", generated)
         return generated
 
-    def chat_stream(self, messages: list[dict[str, str]], *, temperature: float = 0.0, max_tokens: int = 256) -> Iterator[str]:
+    def chat_stream(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float = 0.0,
+        max_tokens: int = 256,
+        top_p: float | None = None,
+        top_k: int | None = None,
+    ) -> Iterator[str]:
         self._load()
         assert self._tokenizer is not None and self._model is not None
 
@@ -214,10 +268,12 @@ class LocalCpuTransformersClient:
         streamer = TextIteratorStreamer(self._tokenizer, skip_prompt=True, skip_special_tokens=True)
         generation_kwargs = dict(
             inputs,
-            do_sample=False,
+            do_sample=True,
+            temperature=temperature,
             max_new_tokens=generation_tokens,
             pad_token_id=self._tokenizer.eos_token_id,
             streamer=streamer,
+            **self._sampling_kwargs(top_p, top_k),
         )
         thread = threading.Thread(target=self._model.generate, kwargs=generation_kwargs, daemon=True)
         thread.start()

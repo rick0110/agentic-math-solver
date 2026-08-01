@@ -6,8 +6,10 @@ import json
 import os
 import socket
 import threading
+import time
 import uuid
 import webbrowser
+from urllib import error as urllib_error, request as urllib_request
 
 from flask import Flask, Response, jsonify, render_template, request, send_file
 
@@ -40,6 +42,14 @@ def create_app(config: AppConfig) -> Flask:
     solver = SwarmOrchestrator(config)
     list_jobs: dict[str, Path] = {}
     conversations = ConversationStore(config.resolved_output_dir() / "conversations")
+    # Estado pra calcular tokens/s: os contadores do vLLM (/metrics) são cumulativos
+    # desde que o servidor subiu, então a taxa é a diferença entre duas leituras
+    # dividida pelo tempo entre elas — guarda a última leitura pra comparar na próxima.
+    metrics_state: dict[str, float | None] = {
+        "prompt_tokens": None,
+        "generation_tokens": None,
+        "timestamp": None,
+    }
 
     def backend_snapshot() -> dict[str, str]:
         model = config.model
@@ -53,6 +63,8 @@ def create_app(config: AppConfig) -> Flask:
             "weights_source": model.weights_source,
             "weights_path": model.weights_path or "not set",
             "temperature": model.temperature,
+            "top_p": model.top_p,
+            "top_k": model.top_k,
             "max_tokens": model.max_tokens,
             "timeout_seconds": model.timeout_seconds,
             "agent_count": config.agent_count,
@@ -60,8 +72,6 @@ def create_app(config: AppConfig) -> Flask:
             "prompt_dir": str(config.resolved_prompt_dir()),
             "output_dir": str(config.resolved_output_dir()),
         }
-        # Nunca inclua model.api_key aqui — esse dict é enviado ao navegador (e pode estar
-        # atrás de um túnel público), e a chave não deve vazar mesmo sendo "EMPTY" por padrão.
 
     def apply_options(options: dict) -> None:
         if not options:
@@ -70,6 +80,38 @@ def create_app(config: AppConfig) -> Flask:
         if model_val:
             solver.config.model.model_id = model_val
             solver.config.model.model_name = model_val
+            # solver.client guarda sua própria cópia (model_name ou model_id, conforme
+            # o backend) capturada uma vez no __init__ do orchestrator — mudar só o
+            # `config` acima nunca chegava nela, então trocar o modelo pela UI não tinha
+            # nenhum efeito na requisição real. Seta os dois; o client em uso só lê o
+            # atributo que ele de fato tem, o outro fica sem uso (inofensivo).
+            solver.client.model_name = model_val
+            solver.client.model_id = model_val
+
+        # temperature/top_p/top_k são lidos direto de solver.config.model a cada
+        # chamada (não ficam presos num client construído uma vez, como model_name
+        # ficava) — mudar aqui já vale pra próxima solicitação, sem gambiarra extra.
+        temperature_raw = options.get("temperature")
+        if temperature_raw not in (None, ""):
+            try:
+                solver.config.model.temperature = float(temperature_raw)
+            except (TypeError, ValueError):
+                pass
+
+        if "top_p" in options:
+            top_p_raw = options["top_p"]
+            try:
+                solver.config.model.top_p = float(top_p_raw) if top_p_raw not in (None, "") else None
+            except (TypeError, ValueError):
+                pass
+
+        if "top_k" in options:
+            top_k_raw = options["top_k"]
+            try:
+                solver.config.model.top_k = int(top_k_raw) if top_k_raw not in (None, "") else None
+            except (TypeError, ValueError):
+                pass
+
         thinking_val = options.get("thinking")
         if thinking_val == "fast":
             solver.config.agent_count = 1
@@ -77,6 +119,35 @@ def create_app(config: AppConfig) -> Flask:
         elif thinking_val == "deep":
             solver.config.agent_count = 4
             solver.config.use_judge = True
+
+    def fetch_vllm_metrics() -> dict[str, float]:
+        """GETs the vLLM OpenAI-compatible server's Prometheus /metrics endpoint (same
+        host:port as the API, no /v1 suffix) and parses it into a flat {name: value}
+        dict. Only meaningful for the `remote` backend — vLLM is the one computing/
+        exposing these; there's nothing equivalent for the in-process `cpu` backend."""
+        base = config.model.endpoint.rsplit("/v1", 1)[0].rstrip("/")
+        req = urllib_request.Request(f"{base}/metrics", method="GET")
+        with urllib_request.urlopen(req, timeout=3) as resp:
+            text = resp.read().decode("utf-8", errors="ignore")
+
+        values: dict[str, float] = {}
+        for line in text.splitlines():
+            if not line or line.startswith("#"):
+                continue
+            name_and_labels, _, value = line.rpartition(" ")
+            if not name_and_labels:
+                continue
+            name = name_and_labels.split("{", 1)[0].strip()
+            try:
+                values[name] = float(value)
+            except ValueError:
+                continue
+        return values
+
+    def compute_rate(previous: float | None, current: float | None, elapsed: float) -> float | None:
+        if previous is None or current is None or elapsed <= 0:
+            return None
+        return max(0.0, (current - previous) / elapsed)
 
     def ndjson(event_iterable) -> Response:
         def generate():
@@ -102,6 +173,35 @@ def create_app(config: AppConfig) -> Flask:
     def health():
         ready = solver.client.healthcheck()
         return jsonify({"ok": True, "model_ready": ready, "backend": backend_snapshot()})
+
+    @app.get("/api/backend/stats")
+    def backend_stats():
+        if config.model.backend.lower() not in {"remote"}:
+            return jsonify({"ok": False, "error": "Estatísticas ao vivo só disponíveis com backend remote (vLLM)."}), 400
+
+        try:
+            metrics = fetch_vllm_metrics()
+        except (urllib_error.URLError, OSError, TimeoutError) as exc:
+            return jsonify({"ok": False, "error": f"Não foi possível ler métricas do vLLM: {exc}"}), 502
+
+        now = time.time()
+        prompt_tokens = metrics.get("vllm:prompt_tokens_total")
+        generation_tokens = metrics.get("vllm:generation_tokens_total")
+        elapsed = (now - metrics_state["timestamp"]) if metrics_state["timestamp"] is not None else 0.0
+
+        stats = {
+            "running_requests": metrics.get("vllm:num_requests_running"),
+            "waiting_requests": metrics.get("vllm:num_requests_waiting"),
+            "gpu_cache_usage_percent": metrics.get("vllm:gpu_cache_usage_perc"),
+            "generation_tokens_per_sec": compute_rate(metrics_state["generation_tokens"], generation_tokens, elapsed),
+            "prompt_tokens_per_sec": compute_rate(metrics_state["prompt_tokens"], prompt_tokens, elapsed),
+        }
+
+        metrics_state["prompt_tokens"] = prompt_tokens
+        metrics_state["generation_tokens"] = generation_tokens
+        metrics_state["timestamp"] = now
+
+        return jsonify({"ok": True, "stats": stats})
 
     @app.post("/api/chat/stream")
     def chat_stream():
