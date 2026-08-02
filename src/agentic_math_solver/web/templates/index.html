@@ -76,7 +76,7 @@
             <div class="menu-divider"></div>
             <div class="menu-setting">
               <label>Model ID:</label>
-              <input type="text" id="model-input" value="{{ backend.model_id }}" />
+              <input type="text" id="model-input" value="{{ backend.model_id if backend.backend.lower() in ['cpu', 'local_cpu', 'transformers'] else backend.model_name }}" />
             </div>
             <div class="menu-setting">
               <label>Thinking:</label>
