@@ -53,15 +53,11 @@ def create_app(config: AppConfig) -> Flask:
 
     def backend_snapshot() -> dict[str, str]:
         model = config.model
-        return {
+        snapshot = {
             "backend": model.backend,
             "endpoint": model.endpoint,
             "model_name": model.model_name,
             "model_id": model.model_id,
-            "device": model.device,
-            "torch_dtype": model.torch_dtype,
-            "weights_source": model.weights_source,
-            "weights_path": model.weights_path or "not set",
             "temperature": model.temperature,
             "top_p": model.top_p,
             "top_k": model.top_k,
@@ -69,9 +65,18 @@ def create_app(config: AppConfig) -> Flask:
             "timeout_seconds": model.timeout_seconds,
             "agent_count": config.agent_count,
             "use_judge": config.use_judge,
+            "weights_source": model.weights_source,
+            "weights_path": model.weights_path or "not set",
             "prompt_dir": str(config.resolved_prompt_dir()),
             "output_dir": str(config.resolved_output_dir()),
         }
+        # device/torch_dtype só existem de fato pro backend local (LocalCpuTransformersClient);
+        # pro backend remoto, o vLLM roda onde/como foi iniciado (normalmente GPU), então
+        # mostrar "cpu"/"float32" aqui seria só o default do dataclass, não a realidade.
+        if model.backend.lower() in {"cpu", "local_cpu", "transformers"}:
+            snapshot["device"] = model.device
+            snapshot["torch_dtype"] = model.torch_dtype
+        return snapshot
 
     def apply_options(options: dict) -> None:
         if not options:
@@ -192,7 +197,7 @@ def create_app(config: AppConfig) -> Flask:
         stats = {
             "running_requests": metrics.get("vllm:num_requests_running"),
             "waiting_requests": metrics.get("vllm:num_requests_waiting"),
-            "gpu_cache_usage_percent": metrics.get("vllm:gpu_cache_usage_perc"),
+            "gpu_cache_usage_percent": metrics.get("vllm:kv_cache_usage_perc"),
             "generation_tokens_per_sec": compute_rate(metrics_state["generation_tokens"], generation_tokens, elapsed),
             "prompt_tokens_per_sec": compute_rate(metrics_state["prompt_tokens"], prompt_tokens, elapsed),
         }
