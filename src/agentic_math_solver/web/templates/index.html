@@ -32,6 +32,9 @@
   <body>
     <div class="app-shell">
       <aside class="sidebar">
+        <div class="site-logo-wrap">
+          <img src="{{ url_for('static', filename='logos/wordmark.svg') }}" alt="rick0110" class="site-logo" />
+        </div>
         <button id="new-chat-btn" class="new-chat-btn">
           + New Chat
         </button>
@@ -82,6 +85,7 @@
               <label>Thinking:</label>
               <select id="thinking-select">
                 <option value="deep">Deep Swarm</option>
+                <option value="deep_verify">Deep Swarm + Verify (Judge sempre)</option>
                 <option value="fast">Fast (1 Agent)</option>
               </select>
             </div>
@@ -112,6 +116,16 @@
           </div>
         </footer>
       </main>
+
+      <aside class="agent-inspector" id="agent-inspector">
+        <div class="agent-inspector-header">
+          <span>🔍 Inspetor de Agentes</span>
+          <button id="inspector-toggle-btn" class="inspector-toggle-btn" title="Recolher/Expandir" type="button">⏷</button>
+        </div>
+        <div class="agent-inspector-body" id="agent-inspector-body">
+          <p class="agent-inspector-empty">Envie uma mensagem para ver journal, requisições e chamadas de tool de cada agente, em ordem.</p>
+        </div>
+      </aside>
     </div>
 
     <script>

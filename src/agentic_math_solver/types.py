@@ -12,6 +12,7 @@ class AgentResult:
     raw_response: str
     summary: str = ""
     trace: list[dict[str, Any]] = field(default_factory=list)
+    journal: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

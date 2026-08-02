@@ -12,6 +12,9 @@ const optionsMenu = document.getElementById("options-menu");
 const menuAttachBtn = document.getElementById("menu-attach-btn");
 const menuListBtn = document.getElementById("menu-list-btn");
 const attachmentsPreview = document.getElementById("attachments-preview");
+const agentInspectorEl = document.getElementById("agent-inspector");
+const agentInspectorBody = document.getElementById("agent-inspector-body");
+const inspectorToggleBtn = document.getElementById("inspector-toggle-btn");
 
 // Conversations are persisted server-side (one JSON file per conversation
 // under outputs/conversations/), so history survives clearing the browser.
@@ -248,7 +251,7 @@ function timeAgo(isoString) {
 function renderWelcomeScreen() {
     chatWindow.innerHTML = `
       <div class="welcome-screen">
-        <div class="welcome-logo">Σ</div>
+        <img class="welcome-logo" src="/static/logos/wordmark.svg" alt="rick0110" />
         <div class="welcome-title">Como posso te ajudar com matemática hoje?</div>
         <div class="welcome-suggestions">
           <div class="suggestion-card" onclick="setAndSend('Resolva a equação quadrática: 2x² - 4x - 6 = 0')">
@@ -471,12 +474,13 @@ function renderBubble(role, content, extraClass = "") {
     const wrapper = document.createElement("div");
     wrapper.className = `message-wrapper ${role} ${extraClass}`.trim();
 
-    let avatarChar = role === "user" ? "U" : "Σ";
-    let avatarHtml = `<div class="avatar ${role}">${avatarChar}</div>`;
+    let avatarHtml = role === "user"
+        ? `<div class="avatar user">U</div>`
+        : `<div class="avatar assistant"><img class="avatar-logo" src="/static/logos/wordmark.svg" alt="" /></div>`;
 
     let contentHtml = "";
     if (extraClass === 'thinking') {
-        contentHtml = `<div class="spinning-sigma">Σ</div><span style="margin-left:10px;">Calculando e escrevendo a solução...</span>`;
+        contentHtml = `<img class="thinking-inline-logo" src="/static/logos/thinking.svg" alt="" /><span style="margin-left:10px;">Calculando e escrevendo a solução...</span>`;
     } else {
         contentHtml = formatMarkdown(content);
     }
@@ -515,7 +519,7 @@ function createSwarmPanel(gridEl, summaryEl) {
         card.className = `agent-card status-running${personaClass}${isJudge ? " judge-card" : ""}`;
         card.innerHTML = `
           <div class="agent-card-header">
-            <span class="agent-icon">${meta.icon}</span>
+            <img class="agent-icon-logo" src="/static/logos/thinking.svg" alt="${meta.label}" />
             <span class="agent-name">${meta.label}</span>
             <span class="agent-status-dot"></span>
           </div>
@@ -605,7 +609,159 @@ function createSwarmPanel(gridEl, summaryEl) {
     };
 }
 
+// ---------------------------------------------------------------------------
+// Agent Inspector: right-side panel. Keeps, per agent (+ Judge), a strictly
+// ordered timeline of every request sent to the model, every response,
+// every tool call, and journal updates — so you can see exactly what each
+// agent did and in what order, independent of the "live typing" swarm cards.
+// ---------------------------------------------------------------------------
+const agentInspector = (function () {
+    let agents = {}; // agentId -> { persona, isJudge, items: [] }
+    let seq = 0;
+
+    function ensureAgent(agentId, persona, isJudge) {
+        if (!agents[agentId]) {
+            agents[agentId] = { persona: persona || null, isJudge: !!isJudge, items: [] };
+        }
+        if (persona) agents[agentId].persona = persona;
+        if (isJudge) agents[agentId].isJudge = true;
+        return agents[agentId];
+    }
+
+    function push(agentId, persona, isJudge, item) {
+        const agent = ensureAgent(agentId, persona, isJudge);
+        seq += 1;
+        agent.items.push({ order: seq, ...item });
+        render();
+    }
+
+    function messagesToText(messages) {
+        return (messages || [])
+            .map((m) => `[${m.role}]\n${m.content}`)
+            .join("\n\n---\n\n");
+    }
+
+    function journalToText(journal) {
+        if (!journal) return "";
+        const lemmas = (journal.proven_lemmas || []).map((l) => `- ${l}`).join("\n") || "(nenhum)";
+        const deadEnds = (journal.dead_ends || []).map((d) => `- ${d}`).join("\n") || "(nenhum)";
+        const hyp = journal.current_hypothesis || "(nenhuma)";
+        return `Lemas provados:\n${lemmas}\n\nBecos sem saída:\n${deadEnds}\n\nHipótese atual:\n${hyp}`;
+    }
+
+    function record(event) {
+        switch (event.type) {
+            case "agent_start":
+                push(event.agent, event.persona, false, { kind: "start", label: "Agente iniciado" });
+                break;
+            case "agent_request":
+                push(event.agent, null, false, {
+                    kind: "request",
+                    label: `Requisição ao modelo — passo ${event.step}`,
+                    detail: messagesToText(event.messages),
+                });
+                break;
+            case "agent_step_done":
+                push(event.agent, null, false, {
+                    kind: "response",
+                    label: `Resposta do modelo — passo ${event.step}`,
+                    detail: event.response || "(vazio)",
+                });
+                break;
+            case "agent_tool_start":
+                push(event.agent, null, false, {
+                    kind: "tool-start",
+                    label: `Tool chamada — ${event.tool}`,
+                    detail: event.input || "(sem input)",
+                });
+                break;
+            case "agent_tool_result":
+                push(event.agent, null, false, {
+                    kind: "tool-result",
+                    label: event.tool === "journal" ? "Journal atualizado" : `Tool resultado — ${event.tool}`,
+                    detail: event.output || "",
+                });
+                break;
+            case "agent_done":
+                push(event.agent, null, false, {
+                    kind: "done",
+                    label: "Agente finalizado",
+                    detail:
+                        journalToText(event.journal) +
+                        (event.answer ? `\n\nResposta final: ${event.answer}` : "\n\n(sem valor curto — ver derivação completa na resposta)") +
+                        (event.error ? `\n\nErro: ${event.error}` : ""),
+                });
+                break;
+            case "judge_start":
+                push("judge", "judge", true, { kind: "start", label: "Judge iniciado" });
+                break;
+            case "judge_done":
+                push("judge", "judge", true, {
+                    kind: "done",
+                    label: "Judge finalizado",
+                    detail: `Decisão: ${event.answer || "(sem valor curto)"}\n\n${event.notes || ""}`,
+                });
+                break;
+            default:
+                break;
+        }
+    }
+
+    function reset() {
+        agents = {};
+        seq = 0;
+        render();
+    }
+
+    function render() {
+        if (!agentInspectorBody) return;
+        const agentIds = Object.keys(agents);
+        if (agentIds.length === 0) {
+            agentInspectorBody.innerHTML = `<p class="agent-inspector-empty">Envie uma mensagem para ver journal, requisições e chamadas de tool de cada agente, em ordem.</p>`;
+            return;
+        }
+
+        // Judge sempre por último — ele só roda depois que todos os outros terminam.
+        agentIds.sort((a, b) => (agents[a].isJudge ? 1 : 0) - (agents[b].isJudge ? 1 : 0));
+
+        agentInspectorBody.innerHTML = agentIds
+            .map((agentId) => {
+                const agent = agents[agentId];
+                const meta = personaMeta(agent.persona);
+                const personaClass = agent.persona ? ` persona-${agent.persona}` : "";
+                const itemsHtml = agent.items
+                    .map(
+                        (item) => `
+                          <li class="ai-item ai-kind-${item.kind}">
+                            <div class="ai-item-head"><span class="ai-order">#${item.order}</span><span>${item.label}</span></div>
+                            ${item.detail ? `<pre class="ai-detail">${escapeHtml(item.detail)}</pre>` : ""}
+                          </li>`
+                    )
+                    .join("");
+                return `
+                  <details class="agent-inspector-item${personaClass}" open>
+                    <summary>
+                      <img class="agent-icon-logo agent-icon-logo-sm" src="/static/logos/thinking.svg" alt="${meta.label}" />
+                      <span class="ai-summary-name">${meta.label}</span>
+                      <span class="agent-inspector-count">${agent.items.length}</span>
+                    </summary>
+                    <ol class="agent-inspector-timeline">${itemsHtml}</ol>
+                  </details>`;
+            })
+            .join("");
+    }
+
+    return { record, reset };
+})();
+
+function escapeHtml(text) {
+    const div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 function dispatchSwarmEvent(panel, event) {
+    agentInspector.record(event);
     switch (event.type) {
         case "agent_start":
             panel.startAgent(event.agent, event.persona);
@@ -691,7 +847,7 @@ function createStreamBubble() {
     wrapper.className = "message-wrapper assistant";
     wrapper.innerHTML = `
       <div class="message-content">
-        <div class="avatar assistant">Σ</div>
+        <div class="avatar assistant"><img class="avatar-logo" src="/static/logos/thinking.svg" alt="" /></div>
         <div class="message">
           <div class="swarm-status">\u{1F9E0} Agentes raciocinando ao vivo...</div>
           <div class="swarm-grid"></div>
@@ -705,6 +861,7 @@ function createStreamBubble() {
     const gridEl = wrapper.querySelector(".swarm-grid");
     const summaryEl = wrapper.querySelector(".summary-markdown");
     const statusEl = wrapper.querySelector(".swarm-status");
+    const avatarImg = wrapper.querySelector(".avatar-logo");
     const panel = createSwarmPanel(gridEl, summaryEl);
 
     return {
@@ -716,10 +873,12 @@ function createStreamBubble() {
         },
         finalize(finalEvent) {
             panel.finalize(buildFinalMarkdown(finalEvent));
+            avatarImg.src = "/static/logos/wordmark.svg";
             chatWindow.scrollTop = chatWindow.scrollHeight;
         },
         showError(message) {
             statusEl.textContent = "⚠️ Erro";
+            avatarImg.src = "/static/logos/wordmark.svg";
             panel.showError(message);
         },
         remove() {
@@ -851,6 +1010,7 @@ async function sendMessage() {
   messageInput.value = "";
   messageInput.style.height = 'auto';
   setBusy(true);
+  agentInspector.reset();
 
   const stream = createStreamBubble();
 
@@ -905,7 +1065,7 @@ function createListJobBubble(filename) {
     wrapper.className = "message-wrapper assistant list-job";
     wrapper.innerHTML = `
       <div class="message-content">
-        <div class="avatar assistant">Σ</div>
+        <div class="avatar assistant"><img class="avatar-logo" src="/static/logos/thinking.svg" alt="" /></div>
         <div class="message">
           <div class="list-job-header">
             <span>\u{1F4C4} Resolvendo lista: <b>${filename}</b></span>
@@ -922,6 +1082,7 @@ function createListJobBubble(filename) {
     const questionsEl = wrapper.querySelector(".list-questions");
     const progressEl = wrapper.querySelector(".list-progress");
     const downloadEl = wrapper.querySelector(".list-download");
+    const avatarImg = wrapper.querySelector(".avatar-logo");
 
     const questionPanels = {};
     let totalCount = 0;
@@ -955,6 +1116,7 @@ function createListJobBubble(filename) {
                 downloadEl.classList.remove("hidden");
                 downloadEl.innerHTML = `<a class="download-pdf-btn" href="${event.url}" download>⬇️ Baixar PDF Resolvido</a>`;
                 progressEl.textContent = `${totalCount}/${totalCount} concluído`;
+                avatarImg.src = "/static/logos/wordmark.svg";
                 chatWindow.scrollTop = chatWindow.scrollHeight;
                 return event.url;
             }
@@ -972,6 +1134,7 @@ function createListJobBubble(filename) {
         },
         showError(message) {
             progressEl.textContent = "erro";
+            avatarImg.src = "/static/logos/wordmark.svg";
             const errBlock = document.createElement("div");
             errBlock.className = "error-text";
             errBlock.textContent = message;
@@ -1031,6 +1194,12 @@ async function uploadList(file) {
         }
     };
     reader.readAsDataURL(file);
+}
+
+if (inspectorToggleBtn) {
+  inspectorToggleBtn.addEventListener("click", () => {
+    agentInspectorEl.classList.toggle("collapsed");
+  });
 }
 
 sendBtn.addEventListener("click", sendMessage);

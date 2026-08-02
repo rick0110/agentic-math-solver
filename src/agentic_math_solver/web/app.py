@@ -121,9 +121,15 @@ def create_app(config: AppConfig) -> Flask:
         if thinking_val == "fast":
             solver.config.agent_count = 1
             solver.config.use_judge = False
+            solver.config.judge_always_verify = False
         elif thinking_val == "deep":
             solver.config.agent_count = 4
             solver.config.use_judge = True
+            solver.config.judge_always_verify = False
+        elif thinking_val == "deep_verify":
+            solver.config.agent_count = 4
+            solver.config.use_judge = True
+            solver.config.judge_always_verify = True
 
     def fetch_vllm_metrics() -> dict[str, float]:
         """GETs the vLLM OpenAI-compatible server's Prometheus /metrics endpoint (same

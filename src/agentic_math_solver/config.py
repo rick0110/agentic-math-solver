@@ -19,6 +19,7 @@ class ModelConfig:
     temperature: float = 0.2
     top_p: float | None = None
     top_k: int | None = None
+    repetition_penalty: float | None = 1.15
     max_tokens: int = 2048
     timeout_seconds: int = 120
 
@@ -31,6 +32,11 @@ class AppConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     agent_count: int = 4
     use_judge: bool = True
+    # Por padrão o Judge só roda quando os agentes discordam (mais barato). Ligar isso faz
+    # o Judge verificar SEMPRE, mesmo com consenso 4/4 — útil porque as 4 personas são o
+    # mesmo modelo com prompts diferentes, então podem compartilhar o mesmo erro sistemático
+    # e "concordar" no valor errado sem que a votação por maioria perceba.
+    judge_always_verify: bool = False
 
     @classmethod
     def from_env(cls) -> "AppConfig":
@@ -50,11 +56,24 @@ class AppConfig:
             temperature=float(os.getenv("AGEMATH_TEMPERATURE", "0.2")),
             top_p=(float(os.getenv("AGEMATH_TOP_P")) if os.getenv("AGEMATH_TOP_P") else None),
             top_k=(int(os.getenv("AGEMATH_TOP_K")) if os.getenv("AGEMATH_TOP_K") else None),
+            repetition_penalty=(
+                float(os.getenv("AGEMATH_REPETITION_PENALTY"))
+                if os.getenv("AGEMATH_REPETITION_PENALTY")
+                else 1.15
+            ),
             max_tokens=int(os.getenv("AGEMATH_MAX_TOKENS", "2048")),
             timeout_seconds=int(os.getenv("AGEMATH_TIMEOUT_SECONDS", "120")),
         )
         agent_count = int(os.getenv("AGEMATH_AGENT_COUNT", "1" if model.backend.lower() in {"cpu", "local_cpu", "transformers"} else "4"))
-        return cls(root_dir=root_dir, prompt_dir=prompt_dir, output_dir=output_dir, model=model, agent_count=agent_count)
+        judge_always_verify = os.getenv("AGEMATH_JUDGE_ALWAYS_VERIFY", "0").lower() in {"1", "true", "yes"}
+        return cls(
+            root_dir=root_dir,
+            prompt_dir=prompt_dir,
+            output_dir=output_dir,
+            model=model,
+            agent_count=agent_count,
+            judge_always_verify=judge_always_verify,
+        )
 
     def resolved_prompt_dir(self) -> Path:
         return self.prompt_dir or self.root_dir / "prompts"

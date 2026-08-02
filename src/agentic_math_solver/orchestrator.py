@@ -13,7 +13,12 @@ from .config import AppConfig
 from .llm_client import LocalCpuTransformersClient, OpenAICompatibleClient
 from .prompts import PromptLibrary
 from .types import AgentResult, SolveResult
-from .utils import normalize_answer
+from .utils import normalize_answer, truncate_preserving_ends
+
+# Orçamento de caracteres pra derivação vencedora que embasa o resumo educacional —
+# mesmo raciocínio do _MAX_CANDIDATE_CHARS do Judge (agents/judge.py): evita estourar
+# o contexto fixo do modelo ao colar um raw_response inteiro num prompt novo.
+_MAX_DERIVATION_CHARS = 2000
 
 
 class SwarmOrchestrator:
@@ -73,10 +78,7 @@ class SwarmOrchestrator:
                         continue
 
                     final_event = event
-                    # Sem \boxed{} no regex: pode ser uma demonstração formal de
-                    # verdade, ou o modelo pequeno pode ter esquecido de formatar uma
-                    # resposta curta que já tinha. Um extrator dedicado decide, em vez
-                    # de confiar cegamente no que o regex não achou.
+                    
                     if event["answer"] is None and event["raw_response"].strip():
                         event_queue.put({
                             "type": "agent_tool_start",
@@ -109,6 +111,7 @@ class SwarmOrchestrator:
                     "summary": "",
                     "raw_response": "",
                     "trace": [],
+                    "journal": {},
                     "error": str(exc),
                 }
                 event_queue.put(final_event)
@@ -121,6 +124,7 @@ class SwarmOrchestrator:
                         raw_response=final_event["raw_response"],
                         summary=final_event["summary"],
                         trace=final_event["trace"],
+                        journal=final_event.get("journal") or {},
                     )
                 event_queue.put({"type": "_agent_thread_done"})
 
@@ -154,27 +158,26 @@ class SwarmOrchestrator:
             }
             return
 
-        # Nem todo problema tem uma resposta curta/numérica: um agente pode
-        # legitimamente devolver só a demonstração formal completa (sem \boxed{})
-        # quando é isso que o problema pede — ver prompts/system.md.
+        
         answers = [result.answer for result in results if result.answer is not None]
         vote_counts = Counter(answers)
 
-        # Precisa de revisão completa do Juiz quando: ninguém deu resposta curta, os
-        # agentes discordam sobre SE a resposta é curta (mistura de boxed/sem-boxed),
-        # ou há discordância de valor sem maioria forte entre quem deu resposta curta.
         disagreement = (
             not vote_counts
             or len(answers) < len(results)
             or (len(vote_counts) > 1 and vote_counts.most_common(1)[0][1] < 3)
         )
+        # Consenso 4/4 não é garantia de correção: as 4 personas são o mesmo modelo com
+        # prompts diferentes, então podem compartilhar o mesmo erro sistemático. Com
+        # `judge_always_verify` ligado, o Judge roda mesmo sem discordância — só pra checar.
+        needs_judge = disagreement or self.config.judge_always_verify
 
         used_judge = False
         judge_notes = ""
         judge_raw_text = ""
         final_answer = normalize_answer(vote_counts.most_common(1)[0][0]) if vote_counts else None
 
-        if disagreement and self.config.use_judge:
+        if needs_judge and self.config.use_judge:
             used_judge = True
             judge_answer = None
             for event in self.judge.decide_stream(
@@ -197,15 +200,22 @@ class SwarmOrchestrator:
 
         summary = ""
         if final_answer is not None:
+            
+            winners = [r for r in results if r.answer is not None and normalize_answer(r.answer) == final_answer]
+            if winners:
+                derivation = max(winners, key=lambda r: len(r.raw_response)).raw_response
+            elif used_judge and judge_raw_text.strip():
+                derivation = judge_raw_text
+            else:
+                derivation = max(results, key=lambda r: len(r.raw_response)).raw_response
+
             yield {"type": "summary_start"}
-            for piece in self._stream_educational_summary(problem, final_answer):
+            for piece in self._stream_educational_summary(problem, final_answer, derivation):
                 summary += piece
                 yield {"type": "summary_token", "delta": piece}
             yield {"type": "summary_done"}
         else:
-            # Modo "demonstração formal": não existe um valor curto pra explicar — a
-            # própria solução completa (do Juiz, se rodou, senão a resposta bruta mais
-            # longa do swarm) já é a resposta final, sem gerar uma segunda paráfrase.
+            
             summary = judge_raw_text or max(results, key=lambda r: len(r.raw_response)).raw_response
             final_answer = "Ver solução passo a passo abaixo"
             yield {"type": "summary_start"}
@@ -240,21 +250,31 @@ class SwarmOrchestrator:
             educational_summary=final_event["educational_summary"],
         )
 
-    def _stream_educational_summary(self, problem: str, final_answer: str) -> Iterator[str]:
+    def _stream_educational_summary(self, problem: str, final_answer: str, derivation: str) -> Iterator[str]:
+        derivation_text = (
+            truncate_preserving_ends(derivation.strip(), _MAX_DERIVATION_CHARS)
+            if derivation and derivation.strip()
+            else "(nenhuma derivação disponível — explique com seu próprio raciocínio)"
+        )
         messages = [
             {
                 "role": "system",
                 "content": (
-                    "Você é um professor de matemática experiente e didático. Sua tarefa é pegar um problema e sua "
-                    "resposta final, e produzir uma explicação passo a passo excelente que exponha o raciocícnio passo "
-                    "a passo de modo formal e justificando cada passo matematico. Use Markdown, caixas de "
-                    "código e equações matemáticas (no formato LaTeX com $$ ou $). Resuma a lógica de forma clara e "
-                    "educativa."
+                    "Você é um professor de matemática experiente e didático. Você recebe um problema, a resposta "
+                    "final já verificada, e a derivação bruta que já foi produzida e validada (por um dos agentes "
+                    "solucionadores ou pelo Juiz) para chegar nela. Sua tarefa é REESCREVER essa derivação de forma "
+                    "didática e completa — passo a passo, formal, justificando cada passo matemático — sem inventar "
+                    "um caminho diferente do que já foi verificado. Use Markdown, caixas de código e equações "
+                    "matemáticas (no formato LaTeX com $$ ou $)."
                 ),
             },
             {
                 "role": "user",
-                "content": f"Problema: {problem}\nResposta Final Verificada: {final_answer}\n\nPor favor, explique passo a passo como chegar a essa resposta.",
+                "content": (
+                    f"Problema: {problem}\nResposta Final Verificada: {final_answer}\n\n"
+                    f"Derivação bruta já verificada (use como base — não invente outro caminho):\n{derivation_text}\n\n"
+                    f"Por favor, reescreva essa derivação de forma didática, passo a passo."
+                ),
             },
         ]
         try:

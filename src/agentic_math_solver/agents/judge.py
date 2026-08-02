@@ -7,7 +7,7 @@ from typing import Any
 from ..llm_client import OpenAICompatibleClient
 from ..prompts import PromptLibrary
 from ..types import AgentResult
-from ..utils import extract_answer, normalize_answer, truncate_preserving_ends
+from ..utils import extract_answer, normalize_answer, render_journal, truncate_preserving_ends
 
 # Orçamento conservador de caracteres por candidato no prompt do Juiz. O modelo tem um
 # teto de contexto fixo (ex.: 4096 tokens no Qwen2.5-Math-7B-Instruct — não dá pra só
@@ -35,13 +35,19 @@ class JudgeAgent:
     ) -> Iterator[dict[str, Any]]:
         judge_prompt = prompts.load("judge")
         summary_lines = []
-        for result in candidate_results:
+        for index, result in enumerate(candidate_results):
+            
+            label = chr(ord("A") + index)
             boxed = result.answer or "none — see full derivation below"
             reasoning = truncate_preserving_ends(result.raw_response, _MAX_CANDIDATE_CHARS)
+            journal = result.journal or {}
+            has_journal = any(journal.get(key) for key in ("proven_lemmas", "dead_ends", "current_hypothesis"))
+            journal_text = render_journal(journal) if has_journal else "(agent did not use tools — no journal)"
             summary_lines.append(
-                f"Agent: {result.agent_name}\n"
+                f"Candidate {label}\n"
                 f"Persona: {result.persona}\n"
                 f"Boxed answer: {boxed}\n"
+                f"{journal_text}\n\n"
                 f"Full reasoning:\n{reasoning}"
             )
         user_prompt = (
@@ -51,21 +57,47 @@ class JudgeAgent:
 
         yield {"type": "judge_start"}
 
-        raw_response = ""
-        for piece in client.chat_stream(
-            [
-                {"role": "system", "content": judge_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=temperature,
-            max_tokens=max_tokens,
-            top_p=top_p,
-            top_k=top_k,
-        ):
-            raw_response += piece
-            yield {"type": "judge_token", "delta": piece}
+        system_message = {"role": "system", "content": judge_prompt}
+        user_message = {"role": "user", "content": user_prompt}
+        messages = [system_message, user_message]
 
-        answer = extract_answer(raw_response)
+        from ..tools import extract_tool_call, run_tool
+
+        raw_response = ""
+        response = ""
+        for step in range(4):
+            yield {"type": "agent_request", "agent": "judge", "step": step + 1, "messages": messages}
+
+            response = ""
+            for piece in client.chat_stream(
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                top_p=top_p,
+                top_k=top_k,
+            ):
+                response += piece
+                yield {"type": "judge_token", "delta": piece}
+
+            raw_response += response
+            yield {"type": "agent_step_done", "agent": "judge", "step": step + 1, "response": response}
+
+            tool_name, tool_input = extract_tool_call(response)
+            if not tool_name:
+                break
+
+            yield {"type": "agent_tool_start", "agent": "judge", "tool": tool_name, "step": step + 1, "input": tool_input}
+            tool_output = run_tool(tool_name, tool_input)
+            yield {"type": "agent_tool_result", "agent": "judge", "tool": tool_name, "step": step + 1, "output": tool_output}
+
+            messages = [
+                system_message,
+                user_message,
+                {"role": "assistant", "content": response},
+                {"role": "user", "content": f"Tool '{tool_name}' result:\n{tool_output}"},
+            ]
+
+        answer = extract_answer(response)
         if answer is not None:
             answer = normalize_answer(answer)
 

@@ -7,19 +7,7 @@ from typing import Any
 from ..llm_client import OpenAICompatibleClient
 from ..prompts import PromptLibrary
 from ..types import AgentResult
-from ..utils import extract_answer, normalize_answer
-
-
-def _render_journal(journal: dict[str, Any]) -> str:
-    lemmas = "\n".join(f"- {item}" for item in journal["proven_lemmas"]) or "(none yet)"
-    dead_ends = "\n".join(f"- {item}" for item in journal["dead_ends"]) or "(none yet)"
-    hypothesis = journal["current_hypothesis"] or "(none yet)"
-    return (
-        "Journal so far (carried forward instead of your full prior text):\n"
-        f"Proven lemmas:\n{lemmas}\n\n"
-        f"Dead ends:\n{dead_ends}\n\n"
-        f"Current hypothesis:\n{hypothesis}"
-    )
+from ..utils import extract_answer, normalize_answer, render_journal
 
 
 @dataclass(slots=True)
@@ -75,12 +63,25 @@ class SwarmAgent:
         journal: dict[str, Any] = {"proven_lemmas": [], "dead_ends": [], "current_hypothesis": ""}
 
         for step in range(5):
+            yield {
+                "type": "agent_request",
+                "agent": self.agent_name,
+                "step": step + 1,
+                "messages": messages,
+            }
+
             response = ""
             for piece in client.chat_stream(messages, temperature=temperature, max_tokens=max_tokens, top_p=top_p, top_k=top_k):
                 response += piece
                 yield {"type": "agent_token", "agent": self.agent_name, "delta": piece}
 
             raw_response += f"\n\nStep {step + 1} Output:\n{response}"
+            yield {
+                "type": "agent_step_done",
+                "agent": self.agent_name,
+                "step": step + 1,
+                "response": response,
+            }
 
             journal_update = extract_journal_update(response)
             if journal_update:
@@ -92,6 +93,7 @@ class SwarmAgent:
                     "type": "agent_tool_result",
                     "agent": self.agent_name,
                     "tool": "journal",
+                    "step": step + 1,
                     "output": f"{len(journal['proven_lemmas'])} lema(s) provado(s), {len(journal['dead_ends'])} beco(s) sem saída",
                 }
 
@@ -99,20 +101,16 @@ class SwarmAgent:
             if not tool_name:
                 break
 
-            yield {"type": "agent_tool_start", "agent": self.agent_name, "tool": tool_name, "input": tool_input}
+            yield {"type": "agent_tool_start", "agent": self.agent_name, "tool": tool_name, "step": step + 1, "input": tool_input}
             tool_output = run_tool(tool_name, tool_input)
             trace.append({"step": step, "tool": tool_name, "output": tool_output})
-            yield {"type": "agent_tool_result", "agent": self.agent_name, "tool": tool_name, "output": tool_output}
+            yield {"type": "agent_tool_result", "agent": self.agent_name, "tool": tool_name, "step": step + 1, "output": tool_output}
 
-            # Em vez de acumular o histórico bruto de todas as rodadas (o que faz o
-            # prompt crescer sem limite ao longo das até 5 iterações), reconstrói o
-            # contexto da PRÓXIMA rodada a partir do diário estruturado + só o
-            # resultado da ferramenta mais recente. `raw_response` continua guardando
-            # tudo, para o trace/Juiz — só o que volta pro modelo fica limitado.
+            
             messages = [
                 system_message,
                 user_message,
-                {"role": "assistant", "content": _render_journal(journal)},
+                {"role": "assistant", "content": render_journal(journal)},
                 {"role": "user", "content": f"Tool '{tool_name}' result:\n{tool_output}"},
             ]
 
@@ -128,6 +126,7 @@ class SwarmAgent:
             "summary": response[:500],
             "raw_response": raw_response.strip(),
             "trace": trace,
+            "journal": journal,
         }
 
     def run(
@@ -157,4 +156,5 @@ class SwarmAgent:
             raw_response=final_event["raw_response"],
             summary=final_event["summary"],
             trace=final_event["trace"],
+            journal=final_event["journal"],
         )
